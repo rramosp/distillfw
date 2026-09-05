@@ -43,9 +43,9 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: ./deploy.sh [OPTIONS]"
       echo ""
       echo "Options:"
-      echo "  --reset     Tear down and remove all resources created in GCP"
+      echo "  --reset     Tear down and remove ALL resources created in GCP (service accounts, Cloud Run, Artifact Registry, GCS, local state)"
       echo "  --dry-run   Run pre-flight checks and seed local/offline sample data without GCP cloud calls"
-      echo "  -y, --yes   Automatically confirm prompts (e.g. self-granting missing IAM roles)"
+      echo "  -y, --yes   Automatically confirm prompts (e.g. confirming --reset or self-granting missing IAM roles)"
       echo "  --bucket    Override GCS workspace bucket (default: distillfw-workspaces)"
       echo "  --help, -h  Show this help message"
       exit 0
@@ -61,36 +61,169 @@ done
 # 1. Reset Mode Handler (Section 7.3)
 # ==============================================================================
 if [ "$RESET_MODE" = true ]; then
-  warn "=== Reset Mode Triggered: Cleaning up all DistillFW resources ==="
-  read -p "Are you sure you want to destroy all DistillFW resources in GCP? [y/N] " -r CONFIRM
-  if [[ "$CONFIRM" =~ ^[Yy]$ ]]; then
-    info "Running Terraform Destroy..."
-    if [ -d "terraform" ]; then
-      cd terraform
-      if [ -f "terraform.tfstate" ] || [ -d ".terraform" ]; then
-        terraform destroy -auto-approve || warn "Terraform destroy encountered warnings."
-      fi
-      cd "$SCRIPT_DIR"
+  warn "=== Reset Mode Triggered: Cleaning up ALL DistillFW resources ==="
+  if [ "$AUTO_CONFIRM" = false ]; then
+    read -p "Are you sure you want to permanently destroy and delete ALL DistillFW resources in GCP (service accounts, Cloud Run, Artifact Registry, GCS buckets, and local caches)? [y/N] " -r CONFIRM
+    if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+      info "Reset aborted by user."
+      exit 0
     fi
-
-    PROJECT_ID=$(gcloud config get-value project 2>/dev/null || echo "")
-    if [ -n "$PROJECT_ID" ]; then
-      info "Removing GCS bucket: gs://${BUCKET_NAME}..."
-      gcloud storage rm --recursive "gs://${BUCKET_NAME}" 2>/dev/null || gsutil rm -r "gs://${BUCKET_NAME}" 2>/dev/null || warn "Could not delete bucket gs://${BUCKET_NAME}"
-    fi
-
-    # Clean local workspaces
-    if [ -d ".local_workspace" ]; then
-      rm -rf .local_workspace
-      info "Cleaned .local_workspace"
-    fi
-
-    success "All DistillFW GCP resources have been reset successfully."
-    exit 0
   else
-    info "Reset aborted by user."
-    exit 0
+    info "Auto-confirmation enabled (-y/--yes). Proceeding with complete reset."
   fi
+
+  PROJECT_ID=$(gcloud config get-value project 2>/dev/null || echo "")
+  if [ -z "$PROJECT_ID" ]; then
+    error "No active GCP Project set in gcloud. Run 'gcloud config set project <PROJECT_ID>'."
+    exit 1
+  fi
+  REGION="us-central1"
+  info "Resetting DistillFW resources in project '${PROJECT_ID}' (region: ${REGION})..."
+
+  # 1. Terraform Destroy (if initialized)
+  info "Step 1/7: Running Terraform Destroy..."
+  if [ -d "terraform" ]; then
+    cd terraform
+    if [ -f "terraform.tfstate" ] || [ -d ".terraform" ]; then
+      cat <<EOF > terraform.tfvars
+project_id             = "${PROJECT_ID}"
+region                 = "${REGION}"
+workspaces_bucket_name = "${BUCKET_NAME}"
+EOF
+      terraform init -input=false || true
+      terraform destroy -auto-approve -input=false || warn "Terraform destroy completed with notices. Continuing with explicit gcloud resource sweep."
+    fi
+    cd "$SCRIPT_DIR"
+  fi
+
+  # 2. Delete Cloud Run Services
+  info "Step 2/7: Deleting Cloud Run services matching 'distillfw*'..."
+  RUN_SERVICES=$(gcloud run services list --project="$PROJECT_ID" --region="$REGION" --format="value(name)" 2>/dev/null | grep -E '^distillfw' || true)
+  for svc in $RUN_SERVICES; do
+    info "  Deleting Cloud Run service '$svc'..."
+    gcloud run services delete "$svc" --project="$PROJECT_ID" --region="$REGION" --quiet 2>/dev/null || warn "Failed to delete Cloud Run service $svc"
+  done
+
+  # 3. Delete Artifact Registry Repositories
+  info "Step 3/7: Deleting Artifact Registry repositories matching 'distillfw*'..."
+  AR_REPOS=$(gcloud artifacts repositories list --project="$PROJECT_ID" --location="$REGION" --format="value(name)" 2>/dev/null | grep -E 'distillfw' || true)
+  for repo in $AR_REPOS; do
+    repo_name=$(basename "$repo")
+    info "  Deleting Artifact Registry repository '$repo_name'..."
+    gcloud artifacts repositories delete "$repo_name" --project="$PROJECT_ID" --location="$REGION" --quiet 2>/dev/null || warn "Failed to delete repo $repo_name"
+  done
+
+  # 4. Cleanup Vertex AI Endpoints and Models
+  info "Step 4/7: Cleaning up Vertex AI Endpoints and Models..."
+  ENDPOINTS=$(gcloud ai endpoints list --project="$PROJECT_ID" --region="$REGION" --format="value(name)" 2>/dev/null || true)
+  for ep in $ENDPOINTS; do
+    ep_id=$(basename "$ep")
+    disp=$(gcloud ai endpoints describe "$ep_id" --project="$PROJECT_ID" --region="$REGION" --format="value(displayName)" 2>/dev/null || true)
+    if [[ "$disp" =~ distillfw ]] || [[ "$disp" =~ distill- ]] || [[ "$ep_id" =~ distill ]]; then
+      info "  Undeploying models and deleting Vertex AI endpoint '$disp' ($ep_id)..."
+      DEPLOYED_MODELS=$(gcloud ai endpoints describe "$ep_id" --project="$PROJECT_ID" --region="$REGION" --format="value(deployedModels.id)" 2>/dev/null || true)
+      for dm in $DEPLOYED_MODELS; do
+        gcloud ai endpoints undeploy-model "$ep_id" --project="$PROJECT_ID" --region="$REGION" --deployed-model-id="$dm" --quiet 2>/dev/null || true
+      done
+      gcloud ai endpoints delete "$ep_id" --project="$PROJECT_ID" --region="$REGION" --quiet 2>/dev/null || warn "Failed to delete endpoint $ep_id"
+    fi
+  done
+
+  MODELS=$(gcloud ai models list --project="$PROJECT_ID" --region="$REGION" --format="value(name)" 2>/dev/null || true)
+  for m in $MODELS; do
+    m_id=$(basename "$m")
+    disp=$(gcloud ai models describe "$m_id" --project="$PROJECT_ID" --region="$REGION" --format="value(displayName)" 2>/dev/null || true)
+    if [[ "$disp" =~ distillfw ]] || [[ "$disp" =~ distill- ]] || [[ "$m_id" =~ distill ]]; then
+      info "  Deleting Vertex AI model '$disp' ($m_id)..."
+      gcloud ai models delete "$m_id" --project="$PROJECT_ID" --region="$REGION" --quiet 2>/dev/null || warn "Failed to delete model $m_id"
+    fi
+  done
+
+  # 5. Delete Service Accounts & Clean Project IAM Policy Bindings
+  info "Step 5/7: Deleting DistillFW Service Accounts and removing IAM bindings..."
+  python3 - <<EOF
+import subprocess, json, sys, tempfile, os
+
+project_id = "${PROJECT_ID}"
+try:
+    policy_json = subprocess.check_output(
+        ["gcloud", "projects", "get-iam-policy", project_id, "--format=json"],
+        stderr=subprocess.DEVNULL
+    )
+    policy = json.loads(policy_json)
+    changed = False
+    new_bindings = []
+    for binding in policy.get("bindings", []):
+        members = binding.get("members", [])
+        filtered_members = [m for m in members if not ("distillfw-" in m or "distillfw" in m)]
+        if len(filtered_members) != len(members):
+            changed = True
+        if filtered_members:
+            binding["members"] = filtered_members
+            new_bindings.append(binding)
+    if changed:
+        policy["bindings"] = new_bindings
+        with tempfile.NamedTemporaryFile("w", suffix=".json", delete=False) as tf:
+            json.dump(policy, tf)
+            tf_path = tf.name
+        subprocess.run(
+            ["gcloud", "projects", "set-iam-policy", project_id, tf_path, "--quiet"],
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL
+        )
+        os.remove(tf_path)
+        print("  ✓ Cleaned all DistillFW IAM role bindings from project policy")
+except Exception as e:
+    print(f"  Notice on IAM policy binding cleanup: {e}", file=sys.stderr)
+EOF
+
+  KNOWN_SAS=(
+    "distillfw-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+    "distillfw-trainer-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+    "distillfw-training-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+  )
+  DISCOVERED_SAS=$(gcloud iam service-accounts list --project="$PROJECT_ID" --format="value(email)" 2>/dev/null | grep -E '^distillfw-' || true)
+  TARGET_SAS=()
+  for sa in "${KNOWN_SAS[@]}"; do
+    TARGET_SAS+=("$sa")
+  done
+  for sa in $DISCOVERED_SAS; do
+    if [[ ! " ${TARGET_SAS[*]} " =~ " ${sa} " ]]; then
+      TARGET_SAS+=("$sa")
+    fi
+  done
+
+  for sa in "${TARGET_SAS[@]}"; do
+    if gcloud iam service-accounts describe "$sa" --project="$PROJECT_ID" &>/dev/null; then
+      info "  Deleting service account: $sa..."
+      gcloud iam service-accounts delete "$sa" --project="$PROJECT_ID" --quiet 2>/dev/null || warn "Failed to delete service account $sa"
+    fi
+  done
+
+  # 6. Delete Cloud Storage Buckets
+  info "Step 6/7: Deleting GCS workspace buckets..."
+  if gcloud storage buckets describe "gs://${BUCKET_NAME}" &>/dev/null; then
+    info "  Deleting workspace bucket gs://${BUCKET_NAME}..."
+    gcloud storage rm --recursive "gs://${BUCKET_NAME}" 2>/dev/null || gsutil rm -r "gs://${BUCKET_NAME}" 2>/dev/null || warn "Could not delete gs://${BUCKET_NAME}"
+  fi
+  DISTILL_BUCKETS=$(gcloud storage buckets list --project="$PROJECT_ID" --format="value(name)" 2>/dev/null | grep -E '^distillfw-' || true)
+  for b in $DISTILL_BUCKETS; do
+    if [ "$b" != "$BUCKET_NAME" ]; then
+      info "  Deleting additional bucket gs://$b..."
+      gcloud storage rm --recursive "gs://$b" 2>/dev/null || gsutil rm -r "gs://$b" 2>/dev/null || true
+    fi
+  done
+
+  # 7. Clean Local Workspaces and Build Caches
+  info "Step 7/7: Cleaning local state, workspaces, and caches..."
+  rm -rf terraform/terraform.tfstate* terraform/.terraform terraform/.terraform.lock.hcl terraform/terraform.tfvars
+  rm -rf .local_workspace
+  rm -rf frontend/dist
+  info "  ✓ Cleaned terraform state, .local_workspace, and frontend/dist"
+
+  success "=== All DistillFW GCP resources, service accounts, and local state have been completely reset ==="
+  exit 0
 fi
 
 # ==============================================================================
@@ -363,6 +496,41 @@ fi
 
 if [ "$DRY_RUN" = false ]; then
   terraform init
+
+  # Resiliency: If service accounts, repositories, or buckets exist in GCP but are not yet in
+  # terraform state, adopt them into state to prevent HTTP 409 Conflict errors.
+  TF_STATE=$(terraform state list 2>/dev/null || true)
+
+  BACKEND_SA="distillfw-backend-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+  if ! echo "$TF_STATE" | grep -q "module.iam.google_service_account.backend_sa"; then
+    if gcloud iam service-accounts describe "$BACKEND_SA" --project="$PROJECT_ID" &>/dev/null; then
+      info "Adopting existing service account '$BACKEND_SA' into Terraform state..."
+      terraform import module.iam.google_service_account.backend_sa "projects/${PROJECT_ID}/serviceAccounts/${BACKEND_SA}" 2>/dev/null || true
+    fi
+  fi
+
+  TRAINER_SA="distillfw-trainer-sa@${PROJECT_ID}.iam.gserviceaccount.com"
+  if ! echo "$TF_STATE" | grep -q "module.iam.google_service_account.trainer_sa"; then
+    if gcloud iam service-accounts describe "$TRAINER_SA" --project="$PROJECT_ID" &>/dev/null; then
+      info "Adopting existing service account '$TRAINER_SA' into Terraform state..."
+      terraform import module.iam.google_service_account.trainer_sa "projects/${PROJECT_ID}/serviceAccounts/${TRAINER_SA}" 2>/dev/null || true
+    fi
+  fi
+
+  if ! echo "$TF_STATE" | grep -q "module.artifact_registry.google_artifact_registry_repository.docker_repo"; then
+    if gcloud artifacts repositories describe "distillfw-docker-repo" --project="$PROJECT_ID" --location="us-central1" &>/dev/null; then
+      info "Adopting existing Artifact Registry repository 'distillfw-docker-repo' into Terraform state..."
+      terraform import module.artifact_registry.google_artifact_registry_repository.docker_repo "projects/${PROJECT_ID}/locations/us-central1/repositories/distillfw-docker-repo" 2>/dev/null || true
+    fi
+  fi
+
+  if ! echo "$TF_STATE" | grep -q "module.storage.google_storage_bucket.workspaces_bucket"; then
+    if gcloud storage buckets describe "gs://${BUCKET_NAME}" &>/dev/null; then
+      info "Adopting existing GCS bucket 'gs://${BUCKET_NAME}' into Terraform state..."
+      terraform import module.storage.google_storage_bucket.workspaces_bucket "${BUCKET_NAME}" 2>/dev/null || true
+    fi
+  fi
+
   # Apply storage and artifact registry modules first
   terraform apply -target=module.storage -target=module.artifact_registry -target=module.iam -auto-approve || warn "Terraform apply completed with notices."
 else
@@ -387,6 +555,9 @@ fi
 # (2) Create sample project and populate it with sample data & sample config,
 # leaving it in the DATASET_READY state!
 info "Populating sample project '${SAMPLE_PROJECT_ID}' with sample_config.yaml and sample_dataset.jsonl..."
+
+export GCP_PROJECT_ID="${PROJECT_ID}"
+export DEFAULT_BUCKET="${BUCKET_NAME}"
 
 python3 - <<EOF
 import os

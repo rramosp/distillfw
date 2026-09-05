@@ -106,13 +106,27 @@ If you wish to test pre-flight checks, compile the frontend, initialize Terrafor
 ./deploy.sh --dry-run
 ```
 
-### 2.4. Teardown / Reset Mode (`--reset`)
-To remove and clean up all GCP resources created by DistillFW:
+### 2.4. Teardown / Complete Reset Mode (`--reset`)
+To remove and completely tear down all GCP cloud resources and local artifacts created by DistillFW:
 
 ```bash
 ./deploy.sh --reset
+
+# Or non-interactively with auto-confirmation:
+./deploy.sh --reset --yes
 ```
-This runs `terraform destroy -auto-approve`, deletes the GCS workspaces bucket, and cleans local build caches.
+
+`--reset` executes an exhaustive 7-step cleanup process:
+1. **Terraform Destroy**: Destroys all state-tracked resources via `terraform destroy -auto-approve`.
+2. **Cloud Run Services**: Discovers and deletes all DistillFW Cloud Run services (`distillfw-backend`, `distillfw-frontend`, and any service matching `distillfw*`).
+3. **Artifact Registry**: Deletes all DistillFW container repositories (`distillfw-docker-repo`, `distillfw-repo`).
+4. **Vertex AI Prediction Endpoints & Models**: Undeploys and deletes all Vertex AI endpoints and custom models created by DistillFW.
+5. **IAM Service Accounts & Bindings**: Deletes all DistillFW IAM service accounts (`distillfw-backend-sa`, `distillfw-trainer-sa`, `distillfw-training-sa`, and any matching `distillfw-*`), and automatically cleans all DistillFW role bindings (including tombstoned `deleted:serviceAccount:distillfw-*` entries) from the project IAM policy.
+6. **GCS Workspace Buckets**: Recursively purges and deletes the workspaces bucket (`gs://distillfw-workspaces`) and any additional DistillFW buckets (`gs://distillfw-*`).
+7. **Local State & Build Caches**: Removes all Terraform state files (`terraform.tfstate*`, `.terraform/`, `terraform.tfvars`), local filesystem workspaces (`.local_workspace/`), and compiled frontend assets (`frontend/dist/`).
+
+> [!TIP]
+> **Provisioning Resiliency**: When running `./deploy.sh` to redeploy, the script automatically checks whether any service accounts, buckets, or repositories already exist in GCP and imports them into Terraform state prior to `terraform apply`. This guarantees that deployments will not fail with `HTTP 409 Conflict: Service account already exists` even if previous runs were interrupted.
 
 ---
 

@@ -391,8 +391,19 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
 - **`modules/apigee`**: Configures Apigee environment, API proxies, route targets, and authentication policies.
 - **`modules/iam`**: Configures fine-grained service accounts for Cloud Run, Vertex AI Custom Training, and Apigee.
 
-### 7.3 Additional Options
-- it must contain an option --reset that removes all resources created in GCP.
+### 7.3 Additional Options & Teardown
+- **Reset Mode (`--reset`)**:
+  - Must provide a `--reset` option (with optional `-y`/`--yes` auto-confirmation) that completely and permanently tears down and purges ALL resources created in Google Cloud and locally by DistillFW.
+  - Reset executes an exhaustive 7-step teardown procedure:
+    1. **Terraform Destroy**: Executes `terraform destroy -auto-approve` across all state-tracked resources.
+    2. **Cloud Run Deletion**: Explicitly queries and deletes all DistillFW Cloud Run services (`distillfw-backend`, `distillfw-frontend`, and any service matching `distillfw*`).
+    3. **Artifact Registry Deletion**: Explicitly queries and deletes all DistillFW Artifact Registry repositories (`distillfw-docker-repo`, `distillfw-repo`, and any repository matching `distillfw*`).
+    4. **Vertex AI Cleanup**: Explicitly undeploys and deletes all Vertex AI Prediction Endpoints and Model Registry models associated with DistillFW (`distillfw*`).
+    5. **IAM Service Account & Binding Purge**: Explicitly deletes all DistillFW service accounts (`distillfw-backend-sa`, `distillfw-trainer-sa`, `distillfw-training-sa`, and any matching `distillfw-*`), and purges all active and tombstoned (`deleted:serviceAccount:distillfw-*`) bindings from the GCP project IAM policy.
+    6. **Storage Bucket Deletion**: Recursively removes the workspaces bucket (`gs://distillfw-workspaces`) and any additional project buckets matching `gs://distillfw-*`.
+    7. **Local State & Cache Cleanup**: Purges Terraform state files (`terraform.tfstate*`, `.terraform/`, `terraform.tfvars`), local file workspaces (`.local_workspace/`), and compiled frontend assets (`frontend/dist/`).
+- **Provisioning Resiliency**:
+  - `deploy.sh` automatically checks for and adopts (imports) any pre-existing GCP resources (such as service accounts, Artifact Registry repositories, or GCS buckets) into Terraform state before `terraform apply`, preventing HTTP 409 Conflict errors.
 
 ## 8. Initialization and Example data
 

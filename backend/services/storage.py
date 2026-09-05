@@ -68,7 +68,10 @@ class StorageService:
             try:
                 bucket = self._gcs_client.bucket(bucket_name)
                 if not bucket.exists():
-                    self._gcs_client.create_bucket(bucket, location=settings.GCP_REGION)
+                    kwargs = {"location": settings.GCP_REGION}
+                    if settings.GCP_PROJECT_ID:
+                        kwargs["project"] = settings.GCP_PROJECT_ID
+                    self._gcs_client.create_bucket(bucket, **kwargs)
                     operations_logger.log(f"Created GCS bucket '{bucket_name}'", level="SUCCESS", source="STORAGE")
                 return True
             except Exception as e:
