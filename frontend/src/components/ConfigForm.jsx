@@ -225,6 +225,64 @@ export default function ConfigForm({ bucket, projectId, onSaved }) {
               <span>Extract Response Logprobs (Top-5 soft KD)</span>
             </label>
           </div>
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 pt-3 border-t border-slate-800/80">
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1">
+                Inference Threads (<span className="font-mono text-cyan-300">number_inference_threads</span>)
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={config.models?.teacher?.number_inference_threads ?? 1}
+                onChange={(e) => updateNested('models', 'teacher', 'number_inference_threads', Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-500">1 = Sequential (no parallelism)</span>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1">
+                429 Retry Min Delay (s)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={config.models?.teacher?.retry_delay_min ?? 1.0}
+                onChange={(e) => updateNested('models', 'teacher', 'retry_delay_min', Math.max(0, parseFloat(e.target.value) || 0))}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-500">Default: 1.0s</span>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1">
+                429 Retry Max Delay (s)
+              </label>
+              <input
+                type="number"
+                min="0"
+                step="0.5"
+                value={config.models?.teacher?.retry_delay_max ?? 10.0}
+                onChange={(e) => updateNested('models', 'teacher', 'retry_delay_max', Math.max(0, parseFloat(e.target.value) || 0))}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-500">Default: 10.0s</span>
+            </div>
+            <div>
+              <label className="block text-xs font-medium text-slate-400 mb-1">
+                Max Retries
+              </label>
+              <input
+                type="number"
+                min="1"
+                step="1"
+                value={config.models?.teacher?.max_retries ?? 5}
+                onChange={(e) => updateNested('models', 'teacher', 'max_retries', Math.max(1, parseInt(e.target.value) || 1))}
+                className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 focus:outline-none"
+              />
+              <span className="text-[10px] text-slate-500">Default: 5 retries</span>
+            </div>
+          </div>
         </div>
 
         {/* Student Model */}

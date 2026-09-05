@@ -161,7 +161,11 @@ curl -X POST "http://localhost:8080/api/config/distill-gemma-math-v1?bucket=dist
         "temperature": 0.2,
         "max_output_tokens": 4096,
         "include_thinking": true,
-        "response_logprobs": false
+        "response_logprobs": false,
+        "number_inference_threads": 4,
+        "retry_delay_min": 1.0,
+        "retry_delay_max": 10.0,
+        "max_retries": 5
       },
       "student": {
         "model_name_or_path": "google/gemma-2-9b",
@@ -255,7 +259,11 @@ curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/config/disti
         "temperature": 0.2,
         "max_output_tokens": 4096,
         "include_thinking": true,
-        "response_logprobs": false
+        "response_logprobs": false,
+        "number_inference_threads": 4,
+        "retry_delay_min": 1.0,
+        "retry_delay_max": 10.0,
+        "max_retries": 5
       },
       "student": {
         "model_name_or_path": "google/gemma-2-9b",
@@ -378,6 +386,9 @@ curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
 ### Stage 3: Teacher Model Inference & CoT Knowledge Extraction
 
 Extracts reference completions (`teacher_response`) and chain-of-thought traces (`teacher_thinking`) using Vertex AI Gemini.
+
+- **Parallel Inference Acceleration**: Inferences are parallelized via `number_inference_threads` (defined in `config.yaml` and the UI config form). Set $\ge 1$; when set to `1`, inference executes sequentially without parallelism. Output dataset ordering in `data/teacher_inferences.jsonl` is strictly preserved.
+- **429 Rate Limit Backoff**: Automatically catches HTTP 429 (`RESOURCE_EXHAUSTED` / rate limit / quota exceeded) return codes, retrying with a randomized delay between `retry_delay_min` and `retry_delay_max` (defaults: random between 1.0s and 10.0s) up to `max_retries` (default: 5).
 
 #### A. Using the Web UI
 1. Navigate to **3. Teacher CoT**.

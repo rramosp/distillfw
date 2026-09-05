@@ -101,6 +101,15 @@ flowchart TD
 
 ### Stage 3: Teacher Model Inference & Knowledge Extraction
 - Executes asynchronous or batch inference on the Input Dataset using the designated Gemini Teacher Model via Vertex AI.
+- **Parallel Inference Acceleration**:
+  - Parallelizes calls to the teacher model via a thread pool so that inference completes faster.
+  - Configurable via `number_inference_threads` in `config.yaml` and the UI config form.
+  - Its value must be an integer $\ge 1$. If set to `1`, no parallelization occurs (sequential execution).
+  - When parallelized, the enriched dataset output strictly maintains the exact 1-to-1 order of the original input dataset.
+- **HTTP 429 Rate Limit Backoff & Retry**:
+  - Automatically monitors and intercepts HTTP 429 (`RESOURCE_EXHAUSTED` / Rate Limit / Quota Exceeded) return error codes from the Gemini API.
+  - Retries failed requests with a randomized delay between `retry_delay_min` and `retry_delay_max` (defaults: random between 1.0 and 10.0 seconds), configurable in `config.yaml` and the UI config form, up to `max_retries` attempts (default: 5).
+  - Emits real-time warning logs to the streaming operations logger and collapsible UI panel during backoff and retries.
 - Generates `data/teacher_inferences.jsonl` containing:
   ```json
   {
@@ -286,6 +295,10 @@ models:
     max_output_tokens: 4096
     include_thinking: true
     response_logprobs: false
+    number_inference_threads: 4  # >= 1; if 1, no parallelization occurs
+    retry_delay_min: 1.0        # seconds (random backoff min on 429)
+    retry_delay_max: 10.0       # seconds (random backoff max on 429)
+    max_retries: 5              # max retries on 429 rate limit
   student:
     model_name_or_path: "google/gemma-2-9b"
     quantization: "4bit"  # "none", "8bit", "4bit" (QLoRA)

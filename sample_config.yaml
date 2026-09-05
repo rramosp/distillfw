@@ -10,6 +10,10 @@ models:
     max_output_tokens: 4096
     include_thinking: true
     response_logprobs: false
+    number_inference_threads: 4
+    retry_delay_min: 1.0
+    retry_delay_max: 10.0
+    max_retries: 5
   student:
     model_name_or_path: "google/gemma-2-9b"
     quantization: "4bit"  # "none", "8bit", "4bit" (QLoRA)

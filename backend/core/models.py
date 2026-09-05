@@ -45,6 +45,10 @@ class TeacherModelConfig(BaseModel):
     max_output_tokens: int = 4096
     include_thinking: bool = True
     response_logprobs: bool = False
+    number_inference_threads: int = Field(default=1, ge=1, description="Number of parallel inference threads (>= 1; 1 means sequential)")
+    retry_delay_min: float = Field(default=1.0, ge=0.0, description="Minimum retry delay in seconds on 429 rate limit")
+    retry_delay_max: float = Field(default=10.0, ge=0.0, description="Maximum retry delay in seconds on 429 rate limit")
+    max_retries: int = Field(default=5, ge=1, description="Maximum retry attempts on 429 rate limit")
 
 
 class StudentModelConfig(BaseModel):

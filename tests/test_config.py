@@ -12,6 +12,10 @@ def test_load_sample_config():
     cfg = MasterConfig(**data)
     assert cfg.project.id == "distill-gemma-math-v1"
     assert cfg.models.teacher.model_name == "gemini-2.5-pro"
+    assert cfg.models.teacher.number_inference_threads == 4
+    assert cfg.models.teacher.retry_delay_min == 1.0
+    assert cfg.models.teacher.retry_delay_max == 10.0
+    assert cfg.models.teacher.max_retries == 5
     assert cfg.models.student.model_name_or_path == "google/gemma-2-9b"
     assert cfg.distillation.method == "cot_distillation"
     assert cfg.distillation.cot_weights.thinking_weight == 0.5
