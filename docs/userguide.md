@@ -85,6 +85,30 @@ sequenceDiagram
 
 ---
 
+### API Environments & Authentication Setup
+
+DistillFW provides a unified REST API across all 7 stages. You can execute requests either against your local development environment or directly against the deployed Google Cloud Platform (Cloud Run) backend:
+
+1. **Localhost Environment (`http://localhost:8080`)**:
+   - Running locally (`uvicorn backend.main:app --host 0.0.0.0 --port 8080`), authentication is inherited from your workstation's Google Cloud Application Default Credentials (ADC) without requiring explicit HTTP authorization headers.
+   ```bash
+   export DISTILL_API="http://localhost:8080"
+   ```
+
+2. **Deployed in GCP Environment (Cloud Run Endpoint)**:
+   - When calling the deployed Cloud Run service (`https://distillfw-backend-bxddgrrqlq-uc.a.run.app` or your project's backend URL), Google Cloud organizations enforce IAM-authorized invoker policies (`constraints/iam.allowedPolicyMemberDomains`).
+   - Unauthenticated requests return `403 Forbidden`. You must include an Identity Token in the `Authorization: Bearer <TOKEN>` request header using `gcloud auth print-identity-token`:
+   ```bash
+   export DISTILL_API="https://distillfw-backend-bxddgrrqlq-uc.a.run.app"
+   export AUTH_HEADER="Authorization: Bearer $(gcloud auth print-identity-token)"
+   ```
+
+> [!TIP]
+> **Unified Parameterized Invocation**:
+> You can set `DISTILL_API` and `AUTH_HEADER` in your shell session as shown above, or copy and paste the explicit commands provided for each environment in the stages below.
+
+---
+
 ### Stage 1: Project & Workspace Initialization
 
 The workspace is an isolated GCS directory (`gs://<bucket>/<project-id>/`).
@@ -100,6 +124,8 @@ The workspace is an isolated GCS directory (`gs://<bucket>/<project-id>/`).
 4. Click **Save Configuration**. The UI confirms the update and writes `config.yaml`.
 
 #### B. Using the REST API
+
+##### Localhost (`http://localhost:8080`):
 
 ```bash
 # 1. Create project workspace
@@ -191,6 +217,101 @@ curl -X POST "http://localhost:8080/api/config/distill-gemma-math-v1?bucket=dist
   }'
 ```
 
+##### Deployed in GCP (Cloud Run with `Authorization` Header):
+
+```bash
+# 1. Create project workspace
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/workspaces/projects" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project_id": "distill-gemma-math-v1",
+    "bucket": "distillfw-workspaces",
+    "description": "Distill Gemini 2.5 Pro reasoning into Gemma 2 9B"
+  }'
+
+# 2. Update configuration
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/config/distill-gemma-math-v1?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "project": {
+      "id": "distill-gemma-math-v1",
+      "description": "Distill Gemini 2.5 Pro reasoning into Gemma 2 9B for mathematical problem solving",
+      "gcs_workspace": "gs://distillfw-workspaces/distill-gemma-math-v1"
+    },
+    "models": {
+      "teacher": {
+        "model_name": "gemini-2.5-pro",
+        "temperature": 0.2,
+        "max_output_tokens": 4096,
+        "include_thinking": true,
+        "response_logprobs": false
+      },
+      "student": {
+        "model_name_or_path": "google/gemma-2-9b",
+        "quantization": "4bit",
+        "trust_remote_code": false
+      }
+    },
+    "prompt": {
+      "instructions": "You are an expert mathematician. Solve this problem stating the final answer.",
+      "template": "{instructions}\n\nProblem:\n{prompt}\n\nSolution:"
+    },
+    "dataset": {
+      "input_path": "data/input_dataset.jsonl",
+      "auto_split": true,
+      "split_ratios": { "train": 0.8, "val": 0.1, "test": 0.1 },
+      "random_seed": 42
+    },
+    "distillation": {
+      "method": "cot_distillation",
+      "loss_type": "cot_weighted",
+      "cot_weights": { "thinking_weight": 0.5, "response_weight": 1.0 },
+      "peft": {
+        "r": 16,
+        "lora_alpha": 32,
+        "lora_dropout": 0.05,
+        "target_modules": ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+      }
+    },
+    "training": {
+      "hardware": { "accelerator_type": "NVIDIA_L4", "accelerator_count": 1, "machine_type": "g2-standard-8" },
+      "hyperparameters": {
+        "learning_rate": 0.0002,
+        "batch_size": 4,
+        "gradient_accumulation_steps": 4,
+        "num_train_epochs": 3,
+        "warmup_ratio": 0.05,
+        "optimizer": "paged_adamw_8bit",
+        "lr_scheduler_type": "cosine",
+        "max_seq_length": 2048,
+        "logging_steps": 5,
+        "eval_steps": 50,
+        "save_steps": 100
+      }
+    },
+    "evaluation": {
+      "batch_size": 8,
+      "metrics": ["rouge", "bleu", "exact_match", "gemini_judge", "latency"],
+      "gemini_judge": {
+        "model_name": "gemini-2.5-flash",
+        "rubric": ["correctness", "instruction_following", "coherence", "similarity"]
+      }
+    },
+    "deployment": {
+      "serving_framework": "vllm",
+      "machine_type": "g2-standard-4",
+      "accelerator_type": "NVIDIA_L4",
+      "accelerator_count": 1,
+      "min_replicas": 0,
+      "max_replicas": 2,
+      "merge_lora_weights": true
+    }
+  }'
+```
+```
+
 ---
 
 ### Stage 2: Dataset Ingestion & Validation & Splitting
@@ -209,6 +330,8 @@ The dataset is ingested as JSON Lines (`.jsonl`). Each row has a `"prompt"` prop
 
 #### B. Using the REST API
 
+##### Localhost (`http://localhost:8080`):
+
 ```bash
 # Upload and auto-split dataset
 curl -X POST "http://localhost:8080/api/dataset/distill-gemma-math-v1/upload?bucket=distillfw-workspaces" \
@@ -221,6 +344,24 @@ EOF
 
 # Retrieve dataset summary
 curl -s "http://localhost:8080/api/dataset/distill-gemma-math-v1/summary?bucket=distillfw-workspaces" | jq .
+```
+
+##### Deployed in GCP (Cloud Run with `Authorization` Header):
+
+```bash
+# Upload and auto-split dataset
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/dataset/distill-gemma-math-v1/upload?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d @- << 'EOF'
+{
+  "content": "{\"prompt\": \"What is 15 multiplied by 18?\"}\n{\"prompt\": \"Solve for x: 3x + 15 = 45.\"}\n{\"prompt\": \"What is the square root of 625?\"}"
+}
+EOF
+
+# Retrieve dataset summary
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/dataset/distill-gemma-math-v1/summary?bucket=distillfw-workspaces" | jq .
 ```
 
 ---
@@ -238,6 +379,8 @@ Extracts reference completions (`teacher_response`) and chain-of-thought traces 
 
 #### B. Using the REST API
 
+##### Localhost (`http://localhost:8080`):
+
 ```bash
 # Trigger teacher inference
 curl -X POST "http://localhost:8080/api/teacher/distill-gemma-math-v1/run?bucket=distillfw-workspaces" \
@@ -246,6 +389,20 @@ curl -X POST "http://localhost:8080/api/teacher/distill-gemma-math-v1/run?bucket
 
 # Fetch generated inferences and reasoning samples
 curl -s "http://localhost:8080/api/teacher/distill-gemma-math-v1/status?bucket=distillfw-workspaces&limit=3" | jq .
+```
+
+##### Deployed in GCP (Cloud Run with `Authorization` Header):
+
+```bash
+# Trigger teacher inference
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/teacher/distill-gemma-math-v1/run?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"limit": 20}'
+
+# Fetch generated inferences and reasoning samples
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/teacher/distill-gemma-math-v1/status?bucket=distillfw-workspaces&limit=3" | jq .
 ```
 
 ---
@@ -264,12 +421,26 @@ Validates GPU memory footprints to ensure no Out-Of-Memory (OOM) errors occur an
 
 #### B. Using the REST API
 
+##### Localhost (`http://localhost:8080`):
+
 ```bash
 # Run probe
 curl -X POST "http://localhost:8080/api/cost/distill-gemma-math-v1/probe?bucket=distillfw-workspaces" | jq .
 
 # Retrieve cached estimate
 curl -s "http://localhost:8080/api/cost/distill-gemma-math-v1/estimate?bucket=distillfw-workspaces" | jq .summary
+```
+
+##### Deployed in GCP (Cloud Run with `Authorization` Header):
+
+```bash
+# Run probe
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/cost/distill-gemma-math-v1/probe?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" | jq .
+
+# Retrieve cached estimate
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/cost/distill-gemma-math-v1/estimate?bucket=distillfw-workspaces" | jq .summary
 ```
 
 ---
@@ -291,6 +462,8 @@ Launches training using `transformers.Trainer` with PEFT LoRA and the custom `GC
 
 #### B. Using the REST API
 
+##### Localhost (`http://localhost:8080`):
+
 ```bash
 # Launch training job
 curl -X POST "http://localhost:8080/api/training/distill-gemma-math-v1/start?bucket=distillfw-workspaces" \
@@ -302,6 +475,24 @@ curl -s "http://localhost:8080/api/training/distill-gemma-math-v1/metrics?bucket
 
 # Check worker heartbeat
 curl -s "http://localhost:8080/api/training/distill-gemma-math-v1/heartbeat?bucket=distillfw-workspaces" | jq .
+```
+
+##### Deployed in GCP (Cloud Run with `Authorization` Header):
+
+```bash
+# Launch training job
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/training/distill-gemma-math-v1/start?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  -H "Content-Type: application/json" \
+  -d '{"dry_run": true}'
+
+# Poll live metrics
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/training/distill-gemma-math-v1/metrics?bucket=distillfw-workspaces" | jq '.[-1]'
+
+# Check worker heartbeat
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/training/distill-gemma-math-v1/heartbeat?bucket=distillfw-workspaces" | jq .
 ```
 
 ---
@@ -320,12 +511,26 @@ Runs evaluation exclusively on the quarantined `test` split.
 
 #### B. Using the REST API
 
+##### Localhost (`http://localhost:8080`):
+
 ```bash
 # Trigger 3-tier evaluation
 curl -X POST "http://localhost:8080/api/evaluation/distill-gemma-math-v1/run?bucket=distillfw-workspaces"
 
 # Fetch evaluation results
 curl -s "http://localhost:8080/api/evaluation/distill-gemma-math-v1/results?bucket=distillfw-workspaces" | jq .
+```
+
+##### Deployed in GCP (Cloud Run with `Authorization` Header):
+
+```bash
+# Trigger 3-tier evaluation
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/evaluation/distill-gemma-math-v1/run?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
+
+# Fetch evaluation results
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/evaluation/distill-gemma-math-v1/results?bucket=distillfw-workspaces" | jq .
 ```
 
 ---
@@ -345,6 +550,8 @@ Deploys the distilled model to a Vertex AI Endpoint running vLLM and tests infer
 
 #### B. Using the REST API
 
+##### Localhost (`http://localhost:8080`):
+
 ```bash
 # Deploy to Vertex AI Endpoint
 curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/deploy?bucket=distillfw-workspaces" | jq .
@@ -354,6 +561,27 @@ curl -s "http://localhost:8080/api/deployment/distill-gemma-math-v1/status?bucke
 
 # Send a test prediction query
 curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/predict?bucket=distillfw-workspaces" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "prompt": "What is 25 multiplied by 14?",
+    "temperature": 0.2
+  }' | jq .
+```
+
+##### Deployed in GCP (Cloud Run with `Authorization` Header):
+
+```bash
+# Deploy to Vertex AI Endpoint
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/distill-gemma-math-v1/deploy?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" | jq .
+
+# Check endpoint status
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/distill-gemma-math-v1/status?bucket=distillfw-workspaces" | jq .
+
+# Send a test prediction query
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/distill-gemma-math-v1/predict?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "What is 25 multiplied by 14?",
@@ -373,6 +601,13 @@ curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/predict
 ### 4.2. Audit History (`history.json`)
 The GCS workspace records every action in `history.json`. You can inspect the audit log in the **Audit History** tab or via the API:
 
+##### Localhost (`http://localhost:8080`):
 ```bash
 curl -s "http://localhost:8080/api/workspaces/distill-gemma-math-v1/history?bucket=distillfw-workspaces" | jq .
+```
+
+##### Deployed in GCP (Cloud Run with `Authorization` Header):
+```bash
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/workspaces/distill-gemma-math-v1/history?bucket=distillfw-workspaces" | jq .
 ```

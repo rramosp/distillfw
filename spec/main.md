@@ -428,5 +428,5 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
 
 The platform includes detailed documentation under `docs/`:
 - **`docs/install.md`**: Detailed installation instructions in GCP, covering prerequisites, required IAM roles and APIs, automated deployment via `deploy.sh` (including `--dry-run` and `--reset`), manual Terraform provisioning, Docker image builds, and local verification.
-- **`docs/userguide.md`**: Complete end-to-end example workflow showing how to use the application across all 7 stages from both the interactive Web UI and the programmatic REST API.
+- **`docs/userguide.md`**: Complete end-to-end example workflow showing how to use the application across all 7 stages from both the interactive Web UI and the programmatic REST API, illustrating API requests both on localhost (`http://localhost:8080`) and deployed in GCP (Cloud Run) with `Authorization: Bearer $(gcloud auth print-identity-token)` headers.
 
