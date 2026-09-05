@@ -23,3 +23,15 @@ variable "frontend_image_uri" {
   type    = string
   default = ""
 }
+
+variable "allow_public_access" {
+  description = "Allow unauthenticated allUsers invoker access on Cloud Run services"
+  type        = bool
+  default     = false
+}
+
+variable "deployer_member" {
+  description = "IAM member format (e.g. user:admin@domain.com) to grant invoker access"
+  type        = string
+  default     = ""
+}

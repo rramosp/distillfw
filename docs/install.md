@@ -87,11 +87,12 @@ To run the full end-to-end deployment against GCP:
    - `iam.googleapis.com`
 3. **Frontend Compilation**:
    Builds the React/Vite/Tailwind SPA into `frontend/dist/`.
-4. **Terraform Provisioning**:
+4. **Terraform Provisioning (Untargeted Full Infrastructure)**:
+   - Provisions all modules in full with zero targeting flags (`terraform apply -auto-approve`), eliminating targeting warnings.
    - Creates the GCS bucket (`distillfw-workspaces`) with uniform access and CORS policies.
    - Sets up Artifact Registry repository `distillfw-docker-repo`.
    - Provisions least-privilege service accounts (`distillfw-backend-sa`, `distillfw-trainer-sa`).
-   - Deploys Cloud Run services and Apigee routes.
+   - Deploys Cloud Run services (`distillfw-backend`, `distillfw-frontend`) with enterprise domain-restricted org policy compliance (invoker granted to deployer).
 5. **Sample Project Seeding (Section 8)**:
    - Initializes project `distill-gemma-math-v1` in `distillfw-workspaces`.
    - Populates `config.yaml` from `sample_config.yaml`.
@@ -99,14 +100,41 @@ To run the full end-to-end deployment against GCP:
    - Records initialization in `history.json`.
    - Confirms the project state is in **`DATASET_READY`**.
 
-### 2.3. Dry-Run & Local Verification Mode
+### 2.3. Post-Deployment Output Directory & Endpoints
+Upon successful deployment, `deploy.sh` prints a structured directory of all deployed resources, their exact URIs, and ready-to-access endpoints:
+
+| Resource | GCP URI | Details |
+| :--- | :--- | :--- |
+| **GCS Workspace Bucket** | `gs://distillfw-workspaces` | Uniform bucket-level access, CORS streaming |
+| **Artifact Registry** | `us-central1-docker.pkg.dev/<PROJECT_ID>/distillfw-docker-repo` | Standard Docker repository |
+| **Backend Service Account** | `projects/<PROJECT_ID>/serviceAccounts/distillfw-backend-sa@...` | Vertex AI, GCS, ActAs roles |
+| **Trainer Service Account** | `projects/<PROJECT_ID>/serviceAccounts/distillfw-trainer-sa@...` | GCS ObjectAdmin, AR Reader |
+| **Backend Cloud Run Service** | `https://distillfw-backend-<hash>-uc.a.run.app` | FastAPI application + embedded SPA |
+| **Frontend Cloud Run Service** | `https://distillfw-frontend-<hash>-uc.a.run.app` | Vite React frontend |
+| **Sample Project Workspace** | `gs://distillfw-workspaces/distill-gemma-math-v1/` | Initialized in `DATASET_READY` |
+
+#### Ready-to-Access Endpoints
+
+- **Google Cloud Run (Hosted)**:
+  - **Web UI**: `https://distillfw-frontend-<hash>-uc.a.run.app` (or backend root `/`)
+  - **REST API**: `https://distillfw-backend-<hash>-uc.a.run.app/api`
+  - **Interactive API Docs (Swagger UI)**: `https://distillfw-backend-<hash>-uc.a.run.app/docs`
+  - **Health Check**: `https://distillfw-backend-<hash>-uc.a.run.app/healthz`
+- **Local Application (Offline/Development)**:
+  - **Command**: `uvicorn backend.main:app --host 0.0.0.0 --port 8080`
+  - **Web UI**: `http://localhost:8080`
+  - **REST API**: `http://localhost:8080/api`
+  - **Interactive API Docs**: `http://localhost:8080/docs`
+  - **Health Check**: `http://localhost:8080/healthz`
+
+### 2.4. Dry-Run & Local Verification Mode
 If you wish to test pre-flight checks, compile the frontend, initialize Terraform modules, and seed a local/offline workspace without invoking billable GCP calls:
 
 ```bash
 ./deploy.sh --dry-run
 ```
 
-### 2.4. Teardown / Complete Reset Mode (`--reset`)
+### 2.5. Teardown / Complete Reset Mode (`--reset`)
 To remove and completely tear down all GCP cloud resources and local artifacts created by DistillFW:
 
 ```bash

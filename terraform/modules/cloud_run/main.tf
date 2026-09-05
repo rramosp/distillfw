@@ -53,8 +53,9 @@ resource "google_cloud_run_v2_service" "frontend" {
   }
 }
 
-# Allow public unauthenticated access (or protected via Apigee gateway)
+# Allow public unauthenticated access (when permitted by organization policies)
 resource "google_cloud_run_v2_service_iam_member" "backend_public" {
+  count    = var.allow_public_access ? 1 : 0
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.backend.name
@@ -63,9 +64,29 @@ resource "google_cloud_run_v2_service_iam_member" "backend_public" {
 }
 
 resource "google_cloud_run_v2_service_iam_member" "frontend_public" {
+  count    = var.allow_public_access ? 1 : 0
   project  = var.project_id
   location = var.region
   name     = google_cloud_run_v2_service.frontend.name
   role     = "roles/run.invoker"
   member   = "allUsers"
+}
+
+# Grant invoker access to the deploying identity
+resource "google_cloud_run_v2_service_iam_member" "backend_deployer" {
+  count    = var.deployer_member != "" ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.backend.name
+  role     = "roles/run.invoker"
+  member   = var.deployer_member
+}
+
+resource "google_cloud_run_v2_service_iam_member" "frontend_deployer" {
+  count    = var.deployer_member != "" ? 1 : 0
+  project  = var.project_id
+  location = var.region
+  name     = google_cloud_run_v2_service.frontend.name
+  role     = "roles/run.invoker"
+  member   = var.deployer_member
 }

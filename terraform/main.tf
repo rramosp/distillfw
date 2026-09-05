@@ -33,6 +33,8 @@ module "cloud_run" {
   workspaces_bucket_name = module.storage.bucket_name
   backend_image_uri      = var.backend_image_uri
   frontend_image_uri     = var.frontend_image_uri
+  allow_public_access    = var.allow_public_access
+  deployer_member        = var.deployer_member
 }
 
 # 5. Apigee API Gateway Module

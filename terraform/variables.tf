@@ -32,3 +32,15 @@ variable "trainer_image_uri" {
   type        = string
   default     = ""
 }
+
+variable "allow_public_access" {
+  description = "Allow unauthenticated allUsers invoker access on Cloud Run services (set false for domain-restricted enterprise organizations)"
+  type        = bool
+  default     = false
+}
+
+variable "deployer_member" {
+  description = "IAM member format (e.g. user:admin@domain.com) to grant invoker access to Cloud Run services"
+  type        = string
+  default     = ""
+}

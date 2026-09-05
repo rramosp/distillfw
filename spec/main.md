@@ -387,9 +387,15 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
 ### 7.2. Terraform Provisioning
 - **`modules/storage`**: Creates GCS bucket with uniform bucket-level access and CORS policies for direct UI log streaming.
 - **`modules/artifact_registry`**: Sets up private Docker registry for training and API images.
-- **`modules/cloud_run`**: Deploys FastAPI backend service and Web UI frontend.
+- **`modules/cloud_run`**: Deploys FastAPI backend service and Web UI frontend. Complies with domain-restricted enterprise organization policies (`constraints/iam.allowedPolicyMemberDomains`) by making public unauthenticated access (`allUsers`) configurable via `allow_public_access` (default `false`) and granting `roles/run.invoker` to the deploying identity (`deployer_member`).
 - **`modules/apigee`**: Configures Apigee environment, API proxies, route targets, and authentication policies.
 - **`modules/iam`**: Configures fine-grained service accounts for Cloud Run, Vertex AI Custom Training, and Apigee.
+- **Full Infrastructure Provisioning (Zero Targeting Warnings)**:
+  - `deploy.sh` executes untargeted `terraform apply -auto-approve` across all modules, ensuring that no `Warning: Resource targeting is in effect` is emitted and all infrastructure dependencies are resolved in full.
+- **Post-Deployment Resource Directory & Endpoints**:
+  - Once deployment completes, `deploy.sh` outputs:
+    1. A complete list of all deployed Google Cloud resources with their exact URIs (GCS bucket `gs://...`, Artifact Registry repository `us-central1-docker.pkg.dev/...`, IAM Service Accounts `projects/.../serviceAccounts/...`, Cloud Run services, and sample workspace).
+    2. Ready-to-access Web UI and REST API endpoints for both live Google Cloud Run (`https://...`) and local development environments (`http://localhost:8080`, `/api`, `/docs`, `/healthz`).
 
 ### 7.3 Additional Options & Teardown
 - **Reset Mode (`--reset`)**:
