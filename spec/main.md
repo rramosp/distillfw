@@ -252,8 +252,8 @@ gs://<bucket>/<project-id>/
 │   ├── test_predictions.jsonl      # Model predictions on test split
 │   └── eval_results.json           # Lexical scores, Gemini judge rubric, latency stats
 ├── examples/
-│   ├── sample_config.jsonl         # An example config file
-|   └── sample_dataset.jsonl         # An example dataset
+│   ├── sample_config.yaml          # An example config file
+│   └── sample_dataset.jsonl        # An example dataset
 └── deployment/
     └── endpoint_metadata.json      # Vertex AI Endpoint URI, deployed model ID
 ```
@@ -431,8 +431,8 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
 
 ## 8. Initialization and Example data
 
-- **`sample_config.yaml`** must contain the example configuration above
-- **`sample_dataset.jsonl`** must contain 100 math problems whose answer is a just numeric response.
+- **`examples/sample_config.yaml`** must contain the example configuration above
+- **`examples/sample_dataset.jsonl`** must contain 100 math problems whose answer is a just numeric response.
 - `deploy.sh` must (1) create a bucket `distillfw-workspaces` and, (2)create a sample project and populate it with this sample data and sample configuration, and leave it in the `DATASET_READY` state.
 
 ## 9. UI Features

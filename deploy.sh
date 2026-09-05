@@ -656,7 +656,7 @@ fi
 
 # (2) Create sample project and populate it with sample data & sample config,
 # leaving it in the DATASET_READY state!
-info "Populating sample project '${SAMPLE_PROJECT_ID}' with sample_config.yaml and sample_dataset.jsonl..."
+info "Populating sample project '${SAMPLE_PROJECT_ID}' with examples/sample_config.yaml and examples/sample_dataset.jsonl..."
 
 export GCP_PROJECT_ID="${PROJECT_ID}"
 export DEFAULT_BUCKET="${BUCKET_NAME}"
@@ -695,13 +695,15 @@ storage_service.set_active_operation(bucket, project_id, None)
 storage_service.create_project(bucket, project_id, "Sample Mathematical Reasoning Distillation Project")
 
 # 2. Read sample_config.yaml and write to config.yaml
-with open("sample_config.yaml", "r", encoding="utf-8") as f:
+config_path = "examples/sample_config.yaml" if os.path.exists("examples/sample_config.yaml") else "sample_config.yaml"
+with open(config_path, "r", encoding="utf-8") as f:
     config_content = f.read()
 storage_service.write_file(bucket, f"{project_id}/config.yaml", config_content)
 print("  ✓ Wrote config.yaml")
 
 # 3. Read sample_dataset.jsonl and ingest/split
-with open("sample_dataset.jsonl", "r", encoding="utf-8") as f:
+dataset_path = "examples/sample_dataset.jsonl" if os.path.exists("examples/sample_dataset.jsonl") else "sample_dataset.jsonl"
+with open(dataset_path, "r", encoding="utf-8") as f:
     dataset_content = f.read()
 
 res = dataset_service.ingest_and_split(

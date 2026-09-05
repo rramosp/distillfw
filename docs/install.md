@@ -99,8 +99,8 @@ To run the full end-to-end deployment against GCP:
    - Deploys Cloud Run services (`distillfw-backend`, `distillfw-frontend`) with enterprise domain-restricted org policy compliance (invoker granted to deployer).
 6. **Sample Project Seeding (Section 8)**:
    - Initializes project `distill-gemma-math-v1` in `distillfw-workspaces`.
-   - Populates `config.yaml` from `sample_config.yaml`.
-   - Validates and splits `sample_dataset.jsonl` (100 numeric math problems) into 80% train, 10% val, 10% test.
+   - Populates `config.yaml` from `examples/sample_config.yaml`.
+   - Validates and splits `examples/sample_dataset.jsonl` (100 numeric math problems) into 80% train, 10% val, 10% test.
    - Records initialization in `history.json`.
    - Confirms the project state is in **`DATASET_READY`**.
 

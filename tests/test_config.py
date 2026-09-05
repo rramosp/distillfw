@@ -6,7 +6,8 @@ from backend.core.models import MasterConfig
 
 
 def test_load_sample_config():
-    with open("sample_config.yaml", "r") as f:
+    config_path = "examples/sample_config.yaml" if os.path.exists("examples/sample_config.yaml") else "sample_config.yaml"
+    with open(config_path, "r") as f:
         data = yaml.safe_load(f)
 
     cfg = MasterConfig(**data)

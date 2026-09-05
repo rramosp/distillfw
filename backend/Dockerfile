@@ -16,8 +16,7 @@ RUN pip install --no-cache-dir -U pip setuptools wheel \
 
 COPY backend/ /app/backend/
 COPY frontend/dist/ /app/frontend/dist/
-COPY sample_config.yaml /app/sample_config.yaml
-COPY sample_dataset.jsonl /app/sample_dataset.jsonl
+COPY examples/ /app/examples/
 
 ENV PYTHONPATH=/app
 

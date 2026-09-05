@@ -20,7 +20,8 @@ def test_cost_probe_calculation(temp_workspace):
     project = "test-cost-proj"
 
     # Setup config and dataset
-    with open("sample_config.yaml", "r") as f:
+    config_path = "examples/sample_config.yaml" if os.path.exists("examples/sample_config.yaml") else "sample_config.yaml"
+    with open(config_path, "r") as f:
         cfg = f.read()
     storage_service.write_file(bucket, f"{project}/config.yaml", cfg)
     storage_service.write_file(

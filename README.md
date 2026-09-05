@@ -73,8 +73,9 @@ distillfw/
 │   └── modules/iam/          # Service accounts & least-privilege roles
 ├── tests/                    # Comprehensive unit and integration test suite
 ├── deploy.sh                 # Pre-flight checks, provisioning, sample data seeding, and --reset
-├── sample_config.yaml        # Master configuration specification
-└── sample_dataset.jsonl      # 100 math problems with numeric responses
+└── examples/                 # Sample configurations and datasets
+    ├── sample_config.yaml    # Master configuration specification
+    └── sample_dataset.jsonl  # 100 math problems with numeric responses
 ```
 
 ---

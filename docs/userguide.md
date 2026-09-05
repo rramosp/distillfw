@@ -337,7 +337,7 @@ The dataset is ingested as JSON Lines (`.jsonl`). Each row has a `"prompt"` prop
 
 #### A. Using the Web UI
 1. Navigate to **2. Dataset Split**.
-2. Click **Upload File (.jsonl)** and select `sample_dataset.jsonl` (or click **Paste Raw Data** and paste lines).
+2. Click **Upload File (.jsonl)** and select `examples/sample_dataset.jsonl` (or click **Paste Raw Data** and paste lines).
 3. The platform parses and validates each row, creates `data/split_dataset.jsonl`, and displays the breakdown cards:
    - **Total Prompts**: 100
    - **Train Split**: 80 (used for fine-tuning)
