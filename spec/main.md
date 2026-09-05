@@ -395,7 +395,7 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
 - **Post-Deployment Resource Directory & Endpoints**:
   - Once deployment completes, `deploy.sh` outputs:
     1. A complete list of all deployed Google Cloud resources with their exact URIs (GCS bucket `gs://...`, Artifact Registry repository `us-central1-docker.pkg.dev/...`, IAM Service Accounts `projects/.../serviceAccounts/...`, Cloud Run services, and sample workspace).
-    2. Ready-to-access Web UI and REST API endpoints for both live Google Cloud Run (`https://...`) and local development environments (`http://localhost:8080`, `/api`, `/docs`, `/healthz`).
+    2. Ready-to-access Web UI and REST API endpoints. Because domain-restricted organizations enforce IAM authentication on Cloud Run (returning 403 Forbidden to unauthenticated browsers), instructions are provided for authenticated access via `gcloud run services proxy`, direct local execution via `uvicorn backend.main:app`, and identity-token cURL requests.
 
 ### 7.3 Additional Options & Teardown
 - **Reset Mode (`--reset`)**:

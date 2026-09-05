@@ -115,17 +115,36 @@ Upon successful deployment, `deploy.sh` prints a structured directory of all dep
 
 #### Ready-to-Access Endpoints
 
-- **Google Cloud Run (Hosted)**:
-  - **Web UI**: `https://distillfw-frontend-<hash>-uc.a.run.app` (or backend root `/`)
-  - **REST API**: `https://distillfw-backend-<hash>-uc.a.run.app/api`
-  - **Interactive API Docs (Swagger UI)**: `https://distillfw-backend-<hash>-uc.a.run.app/docs`
-  - **Health Check**: `https://distillfw-backend-<hash>-uc.a.run.app/healthz`
-- **Local Application (Offline/Development)**:
-  - **Command**: `uvicorn backend.main:app --host 0.0.0.0 --port 8080`
+> [!IMPORTANT]
+> **Enterprise IAM Authentication on Cloud Run (`Error: Forbidden`)**:
+> If your Google Cloud organization enforces domain-restricted sharing (`constraints/iam.allowedPolicyMemberDomains`), Cloud Run services prohibit unauthenticated public access (`allUsers`). Navigating directly to `*.run.app` in a standard browser returns `Error: Forbidden (403)` because the browser does not send an identity token by default.
+>
+> **How to Access the Application**:
+> - **Option 1: Direct Local Execution (Recommended)**
+>   Run the local FastAPI server, which connects directly to your live GCP resources (`gs://distillfw-workspaces`, Vertex AI) using your active `gcloud` credentials:
+>   ```bash
+>   uvicorn backend.main:app --host 0.0.0.0 --port 8080
+>   ```
+>   Open **`http://localhost:8080`** in your browser.
+> - **Option 2: Cloud Run Authenticated Proxy**
+>   Use the built-in `gcloud run services proxy` command to tunnel to Cloud Run while automatically attaching your Google identity credentials:
+>   ```bash
+>   gcloud run services proxy distillfw-backend --region=us-central1 --port=8080
+>   ```
+>   Open **`http://localhost:8080`** in your browser.
+> - **Option 3: Programmatic API Queries via cURL**
+>   Pass an identity token in the `Authorization` header:
+>   ```bash
+>   curl -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+>     https://distillfw-backend-<hash>-uc.a.run.app/healthz
+>   ```
+
+- **Local Application Endpoints**:
   - **Web UI**: `http://localhost:8080`
   - **REST API**: `http://localhost:8080/api`
-  - **Interactive API Docs**: `http://localhost:8080/docs`
+  - **Interactive API Docs (Swagger UI)**: `http://localhost:8080/docs`
   - **Health Check**: `http://localhost:8080/healthz`
+  - **Frontend Dev Server (Vite)**: `http://localhost:3000`
 
 ### 2.4. Dry-Run & Local Verification Mode
 If you wish to test pre-flight checks, compile the frontend, initialize Terraform modules, and seed a local/offline workspace without invoking billable GCP calls:
