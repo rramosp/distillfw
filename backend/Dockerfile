@@ -17,6 +17,7 @@ RUN pip install --no-cache-dir -U pip setuptools wheel \
 COPY backend/ /app/backend/
 COPY frontend/dist/ /app/frontend/dist/
 COPY examples/ /app/examples/
+COPY trainer/ /app/trainer/
 
 ENV PYTHONPATH=/app
 

@@ -398,16 +398,17 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
   ```
 
 ### 7.2. Container Image Build & Terraform Provisioning
-- **Frontend SPA & Application Container Build**:
+- **Frontend SPA & Application & Trainer Container Builds**:
   - `deploy.sh` compiles the React Web UI (`npm run build` into `frontend/dist/`).
-  - Packages the unified application container via `backend/Dockerfile`, embedding the compiled Web UI, FastAPI backend routers, and workspace configurations.
-  - Builds and pushes the image (`us-central1-docker.pkg.dev/${PROJECT_ID}/distillfw-docker-repo/distillfw-backend:latest` and `distillfw-frontend:latest`) to Artifact Registry using Docker (with automated fallback to Cloud Build if local Docker is unavailable).
-  - Passes `backend_image_uri` and `frontend_image_uri` into `terraform.tfvars`, ensuring Cloud Run services deploy the active DistillFW application rather than placeholder images.
+  - Packages the unified application container via `backend/Dockerfile`, embedding the compiled Web UI, FastAPI backend routers, examples, and the `trainer/` package.
+  - Builds and pushes the application images (`us-central1-docker.pkg.dev/${PROJECT_ID}/distillfw-docker-repo/distillfw-backend:latest` and `distillfw-frontend:latest`) as well as the specialized custom training image (`distillfw-trainer:latest`) to Artifact Registry using Docker (with automated fallback to Cloud Build if local Docker is unavailable).
+  - The `trainer` package decouples heavy PyTorch/CUDA dependencies so that local simulation and telemetry generation execute seamlessly inside the lightweight backend container without `ModuleNotFoundError`, while full GPU PyTorch runs inside the Vertex AI CustomJob container.
+  - Passes `backend_image_uri`, `frontend_image_uri`, and `trainer_image_uri` into `terraform.tfvars`, ensuring Cloud Run services deploy the active application and pass `TRAINER_IMAGE_URI` and `TRAINER_SA` to the backend.
 - **`modules/storage`**: Creates GCS bucket with uniform bucket-level access and CORS policies for direct UI log streaming.
 - **`modules/artifact_registry`**: Sets up private Docker registry for training and API images.
 - **`modules/cloud_run`**: Deploys FastAPI backend service and Web UI frontend running the built DistillFW container image. Explicitly configures `deletion_protection = false` by default (configurable via `deletion_protection`) on Cloud Run services (`distillfw-backend`, `distillfw-frontend`), ensuring automated teardown workflows and CI/CD pipelines can destroy and replace services without Terraform deletion blocks. Complies with domain-restricted enterprise organization policies (`constraints/iam.allowedPolicyMemberDomains`) by making public unauthenticated access (`allUsers`) configurable via `allow_public_access` (default `false`) and granting `roles/run.invoker` to the deploying identity (`deployer_member`).
 - **`modules/apigee`**: Configures Apigee environment, API proxies, route targets, and authentication policies.
-- **`modules/iam`**: Configures fine-grained service accounts for Cloud Run, Vertex AI Custom Training, and Apigee.
+- **`modules/iam`**: Configures fine-grained service accounts for Cloud Run, Vertex AI Custom Training (`distillfw-trainer-sa`), and Apigee.
 - **Full Infrastructure Provisioning (Zero Targeting Warnings)**:
   - `deploy.sh` executes untargeted `terraform apply -auto-approve` across all modules, ensuring that no `Warning: Resource targeting is in effect` is emitted and all infrastructure dependencies are resolved in full.
 - **Post-Deployment Resource Directory & Endpoints**:

@@ -16,6 +16,7 @@ class Settings(BaseSettings):
         "TRAINER_IMAGE_URI",
         f"{os.getenv('GCP_REGION', 'us-central1')}-docker.pkg.dev/{os.getenv('GCP_PROJECT_ID', 'my-project')}/distillfw-docker-repo/distillfw-trainer:latest"
     )
+    TRAINER_SA: str = os.getenv("TRAINER_SA", "")
     
     # Storage mode: 'gcs' or 'local' (auto-fallback if credentials not found or testing)
     STORAGE_MODE: str = os.getenv("STORAGE_MODE", "auto")

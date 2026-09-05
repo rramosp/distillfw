@@ -24,6 +24,16 @@ variable "frontend_image_uri" {
   default = ""
 }
 
+variable "trainer_image_uri" {
+  type    = string
+  default = ""
+}
+
+variable "trainer_sa_email" {
+  type    = string
+  default = ""
+}
+
 variable "allow_public_access" {
   description = "Allow unauthenticated allUsers invoker access on Cloud Run services"
   type        = bool

@@ -89,11 +89,12 @@ To run the full end-to-end deployment against GCP:
    Builds the React/Vite/Tailwind SPA into `frontend/dist/`.
 4. **Container Image Build & Push to Artifact Registry**:
    - Ensures Artifact Registry repository `distillfw-docker-repo` exists.
-   - Packages the unified application container (FastAPI backend + compiled React SPA) via `backend/Dockerfile`.
-   - Builds and pushes `distillfw-backend:latest` and `distillfw-frontend:latest` to `us-central1-docker.pkg.dev/<PROJECT_ID>/distillfw-docker-repo/`.
+   - Packages the unified application container (FastAPI backend + compiled React SPA + `trainer/` package) via `backend/Dockerfile`.
+   - Packages the Vertex AI custom training container via `trainer/Dockerfile`.
+   - Builds and pushes `distillfw-backend:latest`, `distillfw-frontend:latest`, and `distillfw-trainer:latest` to `us-central1-docker.pkg.dev/<PROJECT_ID>/distillfw-docker-repo/`.
 5. **Terraform Provisioning (Untargeted Full Infrastructure)**:
    - Provisions all modules in full with zero targeting flags (`terraform apply -auto-approve`), eliminating targeting warnings.
-   - Passes `backend_image_uri` and `frontend_image_uri` so Cloud Run services deploy the active DistillFW application rather than placeholder images.
+   - Passes `backend_image_uri`, `frontend_image_uri`, and `trainer_image_uri` so Cloud Run services deploy the active DistillFW application rather than placeholder images and configure `TRAINER_IMAGE_URI` and `TRAINER_SA`.
    - Creates the GCS bucket (`distillfw-workspaces`) with uniform access and CORS policies.
    - Provisions least-privilege service accounts (`distillfw-backend-sa`, `distillfw-trainer-sa`).
    - Deploys Cloud Run services (`distillfw-backend`, `distillfw-frontend`) with enterprise domain-restricted org policy compliance (invoker granted to deployer).

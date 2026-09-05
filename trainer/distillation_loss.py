@@ -1,16 +1,22 @@
-"""Distillation loss implementations for DistillFW."""
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+    HAS_TORCH = True
+except ImportError:
+    torch = None
+    HAS_TORCH = False
 
-import torch
-import torch.nn as nn
-import torch.nn.functional as F
 from typing import Dict, Any, Optional
+
+TensorType = Any if not HAS_TORCH else torch.Tensor
 
 
 def compute_seq_kd_loss(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
+    logits: TensorType,
+    labels: TensorType,
     ignore_index: int = -100
-) -> torch.Tensor:
+) -> TensorType:
     """
     Method 1: Sequence-Level Knowledge Distillation (SeqKD)
     Standard cross-entropy over teacher completion tokens.
@@ -27,14 +33,14 @@ def compute_seq_kd_loss(
 
 
 def compute_cot_loss(
-    logits: torch.Tensor,
-    labels: torch.Tensor,
-    think_mask: Optional[torch.Tensor] = None,
-    resp_mask: Optional[torch.Tensor] = None,
+    logits: TensorType,
+    labels: TensorType,
+    think_mask: Optional[TensorType] = None,
+    resp_mask: Optional[TensorType] = None,
     thinking_weight: float = 0.5,
     response_weight: float = 1.0,
     ignore_index: int = -100
-) -> torch.Tensor:
+) -> TensorType:
     """
     Method 2: Distilling Step-by-Step CoT
     L_CoT = lambda_think * L_think + lambda_resp * L_resp
@@ -65,14 +71,14 @@ def compute_cot_loss(
 
 
 def compute_topk_soft_kd_loss(
-    student_logits: torch.Tensor,
-    teacher_topk_indices: torch.Tensor,
-    teacher_topk_logprobs: torch.Tensor,
-    labels: torch.Tensor,
+    student_logits: TensorType,
+    teacher_topk_indices: TensorType,
+    teacher_topk_logprobs: TensorType,
+    labels: TensorType,
     temperature: float = 2.0,
     alpha: float = 0.3,
     ignore_index: int = -100
-) -> torch.Tensor:
+) -> TensorType:
     """
     Method 4: Top-k Soft Target KD
     L = (1 - alpha) * L_CE + alpha * L_KL
@@ -98,12 +104,12 @@ def compute_topk_soft_kd_loss(
 
 
 def compute_on_policy_gkd_loss(
-    student_logits: torch.Tensor,
-    ref_logits: torch.Tensor,
-    student_tokens: torch.Tensor,
-    rewards: torch.Tensor,
+    student_logits: TensorType,
+    ref_logits: TensorType,
+    student_tokens: TensorType,
+    rewards: TensorType,
     beta: float = 0.1
-) -> torch.Tensor:
+) -> TensorType:
     """
     Method 3: Generalized Knowledge Distillation (GKD) with Teacher reward feedback (DPO-style).
     """

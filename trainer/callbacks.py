@@ -6,8 +6,22 @@ import json
 import threading
 from typing import Dict, Any, Optional
 from datetime import datetime, timezone
-import torch
-from transformers import TrainerCallback, TrainingArguments, TrainerState, TrainerControl
+try:
+    import torch
+    HAS_TORCH = True
+except ImportError:
+    torch = None
+    HAS_TORCH = False
+
+try:
+    from transformers import TrainerCallback, TrainingArguments, TrainerState, TrainerControl
+    HAS_TRANSFORMERS = True
+except ImportError:
+    TrainerCallback = object
+    TrainingArguments = Any
+    TrainerState = Any
+    TrainerControl = Any
+    HAS_TRANSFORMERS = False
 
 
 class GCSProgressCallback(TrainerCallback):
@@ -42,11 +56,9 @@ class GCSProgressCallback(TrainerCallback):
     def _get_gpu_stats(self) -> Dict[str, float]:
         gpu_util = 0.0
         memory_gb = 0.0
-        if torch.cuda.is_available():
+        if torch is not None and hasattr(torch, "cuda") and torch.cuda.is_available():
             try:
                 memory_gb = round(torch.cuda.memory_allocated() / (1024 ** 3), 2)
-                # Max memory cached/reserved
-                max_gb = round(torch.cuda.max_memory_allocated() / (1024 ** 3), 2)
                 gpu_util = min(100.0, (memory_gb / 24.0) * 100.0) if memory_gb > 0 else 50.0
             except Exception:
                 pass
@@ -138,6 +150,11 @@ class GCSProgressCallback(TrainerCallback):
         self._write_metrics(entry)
         self._write_heartbeat(status="RUNNING", step=state.global_step)
 
-    def on_train_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
-        self._write_heartbeat(status="COMPLETED", step=state.global_step)
+    def stop(self):
         self._stop_heartbeat.set()
+        if self._heartbeat_thread and self._heartbeat_thread.is_alive():
+            self._heartbeat_thread.join(timeout=1.0)
+
+    def on_train_end(self, args: TrainingArguments, state: TrainerState, control: TrainerControl, **kwargs):
+        self._write_heartbeat(status="COMPLETED", step=getattr(state, "global_step", 0))
+        self.stop()

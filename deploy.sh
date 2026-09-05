@@ -511,6 +511,7 @@ success "Frontend built into frontend/dist/"
 # ==============================================================================
 BACKEND_IMAGE_URI="us-central1-docker.pkg.dev/${PROJECT_ID}/distillfw-docker-repo/distillfw-backend:latest"
 FRONTEND_IMAGE_URI="us-central1-docker.pkg.dev/${PROJECT_ID}/distillfw-docker-repo/distillfw-frontend:latest"
+TRAINER_IMAGE_URI="us-central1-docker.pkg.dev/${PROJECT_ID}/distillfw-docker-repo/distillfw-trainer:latest"
 
 if [ "$DRY_RUN" = false ]; then
   info "=== Step 4: Building & Pushing Container Images to Artifact Registry ==="
@@ -528,19 +529,22 @@ if [ "$DRY_RUN" = false ]; then
   # Configure Docker credentials
   gcloud auth configure-docker us-central1-docker.pkg.dev --quiet || true
 
-  # Build application container image (integrates React Web UI and FastAPI backend)
-  info "Building DistillFW application container image..."
+  # Build application container image (integrates React Web UI and FastAPI backend) and trainer container
+  info "Building DistillFW application and trainer container images..."
   if command -v docker &>/dev/null && docker info &>/dev/null; then
     docker build -t "$BACKEND_IMAGE_URI" -t "$FRONTEND_IMAGE_URI" -f backend/Dockerfile .
+    docker build -t "$TRAINER_IMAGE_URI" -f trainer/Dockerfile trainer/
     info "Pushing container images to Artifact Registry..."
     docker push "$BACKEND_IMAGE_URI"
     docker push "$FRONTEND_IMAGE_URI"
-    success "Container images pushed to Artifact Registry: $BACKEND_IMAGE_URI"
+    docker push "$TRAINER_IMAGE_URI"
+    success "Container images pushed to Artifact Registry: $BACKEND_IMAGE_URI, $TRAINER_IMAGE_URI"
   else
     info "Docker daemon not running locally. Submitting build via Google Cloud Build..."
     gcloud builds submit --tag "$BACKEND_IMAGE_URI" -f backend/Dockerfile . --project="$PROJECT_ID" --quiet
     gcloud artifacts docker tags add "$BACKEND_IMAGE_URI" "$FRONTEND_IMAGE_URI" --quiet || true
-    success "Container images built and pushed via Cloud Build: $BACKEND_IMAGE_URI"
+    gcloud builds submit --tag "$TRAINER_IMAGE_URI" trainer/ --project="$PROJECT_ID" --quiet
+    success "Container images built and pushed via Cloud Build: $BACKEND_IMAGE_URI, $TRAINER_IMAGE_URI"
   fi
 else
   info "=== Step 4: Skipping container build & push (Dry-Run Mode) ==="
@@ -559,6 +563,7 @@ deployer_member        = "user:${AUTH_ACCOUNT}"
 allow_public_access    = false
 backend_image_uri      = "${BACKEND_IMAGE_URI}"
 frontend_image_uri     = "${FRONTEND_IMAGE_URI}"
+trainer_image_uri      = "${TRAINER_IMAGE_URI}"
 deletion_protection    = false
 EOF
 

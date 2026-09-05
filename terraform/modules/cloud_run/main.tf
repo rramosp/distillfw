@@ -30,6 +30,14 @@ resource "google_cloud_run_v2_service" "backend" {
         name  = "DEFAULT_BUCKET"
         value = var.workspaces_bucket_name
       }
+      env {
+        name  = "TRAINER_IMAGE_URI"
+        value = var.trainer_image_uri
+      }
+      env {
+        name  = "TRAINER_SA"
+        value = var.trainer_sa_email
+      }
     }
   }
 }
