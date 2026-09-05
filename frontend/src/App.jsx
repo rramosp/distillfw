@@ -26,7 +26,7 @@ const TABS = [
   { id: 'dataset', label: '2. Dataset Split', icon: Database },
   { id: 'teacher', label: '3. Teacher CoT', icon: Sparkles },
   { id: 'cost', label: '4. Hardware Probe', icon: Calculator },
-  { id: 'training', label: '5. Training Telemetry', icon: Cpu },
+  { id: 'training', label: '5. Model training', icon: Cpu },
   { id: 'evaluation', label: '6. 3-Tier Eval', icon: Award },
   { id: 'deployment', label: '7. vLLM Deploy', icon: Rocket },
   { id: 'history', label: 'Audit History', icon: History },

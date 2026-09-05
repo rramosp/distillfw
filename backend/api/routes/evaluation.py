@@ -30,3 +30,20 @@ def get_evaluation_results(
     if not res:
         raise HTTPException(status_code=404, detail="No evaluation results found.")
     return res
+
+
+@router.post("/{project_id}/stop")
+def stop_evaluation(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return evaluation_service.stop(bucket, project_id)
+
+
+@router.post("/{project_id}/clear")
+def clear_evaluation(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return evaluation_service.clear(bucket, project_id)
+

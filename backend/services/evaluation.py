@@ -60,12 +60,16 @@ def compute_bleu_and_em(predictions: List[str], references: List[str]) -> Dict[s
 
 
 class EvaluationService:
+    def __init__(self):
+        self._stop_requested: Dict[str, bool] = {}
+
     def run_evaluation(
         self,
         bucket_name: str,
         project_id: str
     ) -> Dict[str, Any]:
         start_time = datetime.now(timezone.utc).isoformat()
+        self._stop_requested[project_id] = False
         storage_service.set_active_operation(bucket_name, project_id, "EVALUATING")
         operations_logger.log(f"Starting 3-tier evaluation on test split for '{project_id}'", level="INFO", source="EVAL", project_id=project_id)
 
@@ -101,8 +105,14 @@ class EvaluationService:
             predictions = []
             latencies_ms = []
             total_tokens = 0
+            stopped = False
 
             for idx, r in enumerate(test_rows, start=1):
+                if self._stop_requested.get(project_id):
+                    operations_logger.log(f"Evaluation stopped by user request for '{project_id}'", level="WARNING", source="EVAL", project_id=project_id)
+                    stopped = True
+                    break
+
                 p = r.get("prompt", "")
                 ref = t_ref_map.get(p, "42")
                 
@@ -114,6 +124,7 @@ class EvaluationService:
                 elapsed_ms = simulated_latency
                 latencies_ms.append(elapsed_ms)
 
+
                 # Prediction is close to reference or matches
                 pred = ref
                 predictions.append({
@@ -123,6 +134,15 @@ class EvaluationService:
                     "latency_ms": round(elapsed_ms, 2)
                 })
                 total_tokens += len(pred.split()) + 10
+
+            if stopped:
+                storage_service.record_history(
+                    bucket_name, project_id, "EVALUATION", "STOPPED",
+                    {"error": "Evaluation stopped by user"},
+                    "Evaluation stopped by user request.",
+                    start_time
+                )
+                return {"status": "STOPPED", "project_id": project_id}
 
             # 1. Lexical & Task Metrics
             preds = [x["student_prediction"] for x in predictions]
@@ -208,6 +228,20 @@ class EvaluationService:
         finally:
             storage_service.set_active_operation(bucket_name, project_id, None)
 
+    def stop(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        self._stop_requested[project_id] = True
+        storage_service.set_active_operation(bucket_name, project_id, None)
+        operations_logger.log(f"Evaluation stopped by user for project '{project_id}'", level="WARNING", source="EVAL", project_id=project_id)
+        return {"status": "STOPPED", "project_id": project_id}
+
+    def clear(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        self._stop_requested[project_id] = True
+        storage_service.set_active_operation(bucket_name, project_id, None)
+        storage_service.delete_file(bucket_name, f"{project_id}/evaluation/eval_results.json")
+        storage_service.delete_file(bucket_name, f"{project_id}/evaluation/test_predictions.jsonl")
+        operations_logger.log(f"Cleared evaluation results for project '{project_id}'", level="INFO", source="EVAL", project_id=project_id)
+        return {"status": "CLEARED", "project_id": project_id}
+
     def trigger_async(self, bucket_name: str, project_id: str) -> None:
         t = threading.Thread(target=self.run_evaluation, args=(bucket_name, project_id), daemon=True)
         t.start()
@@ -220,3 +254,4 @@ class EvaluationService:
 
 
 evaluation_service = EvaluationService()
+

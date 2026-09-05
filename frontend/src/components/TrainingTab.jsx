@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Play, RefreshCw, Activity, CheckCircle2, AlertCircle, HardDrive, BarChart3 } from 'lucide-react';
-import { startTraining, fetchTrainingMetrics, fetchTrainingHeartbeat } from '../api';
+import { Cpu, Play, RefreshCw, Activity, CheckCircle2, AlertCircle, HardDrive, BarChart3, Square, RotateCcw } from 'lucide-react';
+import { startTraining, stopTraining, clearTraining, fetchTrainingMetrics, fetchTrainingHeartbeat } from '../api';
 
 export default function TrainingTab({ bucket, projectId, onStatusChange }) {
   const [metrics, setMetrics] = useState([]);
   const [heartbeat, setHeartbeat] = useState(null);
   const [starting, setStarting] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [dryRun, setDryRun] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -30,6 +31,9 @@ export default function TrainingTab({ bucket, projectId, onStatusChange }) {
     }
   }, [bucket, projectId]);
 
+  const isBusy = starting || heartbeat?.status === 'RUNNING' || heartbeat?.status === 'PENDING';
+  const isFinished = !isBusy && (heartbeat?.status === 'COMPLETED' || (metrics.length > 0 && heartbeat?.status !== 'FAILED'));
+
   const handleStart = async () => {
     setStarting(true);
     setErrorMsg(null);
@@ -41,6 +45,31 @@ export default function TrainingTab({ bucket, projectId, onStatusChange }) {
       setErrorMsg(`Failed to launch training: ${err.message}`);
     } finally {
       setStarting(false);
+    }
+  };
+
+  const handleStop = async () => {
+    setStopping(true);
+    try {
+      await stopTraining(bucket, projectId);
+      setTimeout(loadTelemetry, 1000);
+      if (onStatusChange) onStatusChange();
+    } catch (err) {
+      setErrorMsg(`Failed to stop training: ${err.message}`);
+    } finally {
+      setStopping(false);
+    }
+  };
+
+  const handleClear = async () => {
+    try {
+      await clearTraining(bucket, projectId);
+      setMetrics([]);
+      setHeartbeat(null);
+      setErrorMsg(null);
+      if (onStatusChange) onStatusChange();
+    } catch (err) {
+      setErrorMsg(`Failed to clear training state: ${err.message}`);
     }
   };
 
@@ -108,20 +137,40 @@ export default function TrainingTab({ bucket, projectId, onStatusChange }) {
               type="checkbox"
               checked={dryRun}
               onChange={(e) => setDryRun(e.target.checked)}
-              className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0"
+              disabled={isBusy}
+              className="rounded bg-slate-900 border-slate-700 text-indigo-600 focus:ring-0 disabled:opacity-50"
             />
             <span title="Simulates full training steps locally without submitting a live GCP Vertex CustomJob">
               Dry-run / Local Worker
             </span>
           </label>
-          <button
-            onClick={handleStart}
-            disabled={starting}
-            className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-indigo-500/20 disabled:opacity-50"
-          >
-            <Play className="w-4 h-4" />
-            {starting ? 'Launching...' : 'Launch Training Job'}
-          </button>
+          {isBusy ? (
+            <button
+              onClick={handleStop}
+              disabled={stopping}
+              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-rose-500/20"
+            >
+              <Square className="w-4 h-4 fill-current" />
+              {stopping ? 'Stopping...' : 'Stop Training'}
+            </button>
+          ) : isFinished ? (
+            <button
+              onClick={handleClear}
+              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-4 py-2.5 rounded-lg border border-slate-600 shadow-md"
+            >
+              <RotateCcw className="w-4 h-4 text-slate-300" />
+              Start Over
+            </button>
+          ) : (
+            <button
+              onClick={handleStart}
+              disabled={isBusy}
+              className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-indigo-500/20 disabled:opacity-50"
+            >
+              <Play className="w-4 h-4" />
+              {starting ? 'Launching...' : 'Launch Training Job'}
+            </button>
+          )}
           <button
             onClick={loadTelemetry}
             className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 rounded-lg"
@@ -233,10 +282,54 @@ export default function TrainingTab({ bucket, projectId, onStatusChange }) {
           <Cpu className="w-10 h-10 text-slate-500 mx-auto" />
           <div className="text-slate-300 font-semibold text-sm">No Training Run Started Yet</div>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Click "Launch Training Job" above to start custom fine-tuning with PEFT QLoRA.
+            Click "Start Distillation Training" below or in the header to start custom fine-tuning with PEFT QLoRA.
           </p>
         </div>
       )}
+
+      {/* Bottom Action Section: Start Distillation Training */}
+      <div className="pt-6 border-t border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4 bg-slate-800/40 p-5 rounded-xl border border-slate-700/50">
+        <div>
+          <h4 className="text-sm font-bold text-white">Distillation Pipeline Trigger</h4>
+          <p className="text-xs text-slate-400">
+            {isBusy
+              ? 'Training job actively in execution on Vertex AI / local worker...'
+              : isFinished
+              ? 'Training completed. Check metrics above or start over to launch a new run.'
+              : 'Launch student fine-tuning with LoRA adapter and streaming telemetry.'}
+          </p>
+        </div>
+
+        <div>
+          {isBusy ? (
+            <button
+              onClick={handleStop}
+              disabled={stopping}
+              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-5 py-3 rounded-lg shadow-lg shadow-rose-500/20"
+            >
+              <Square className="w-4 h-4 fill-current" />
+              {stopping ? 'Stopping...' : 'Stop Distillation Training'}
+            </button>
+          ) : isFinished ? (
+            <button
+              onClick={handleClear}
+              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-5 py-3 rounded-lg border border-slate-600 shadow-md"
+            >
+              <RotateCcw className="w-4 h-4 text-slate-300" />
+              Start Over
+            </button>
+          ) : (
+            <button
+              onClick={handleStart}
+              disabled={isBusy}
+              className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 via-purple-600 to-blue-600 hover:from-indigo-500 hover:to-blue-500 text-white text-xs font-semibold px-6 py-3 rounded-lg shadow-xl shadow-indigo-500/25 disabled:opacity-50"
+            >
+              <Play className="w-4 h-4" />
+              {starting ? 'Launching Distillation...' : 'start distillation training'}
+            </button>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

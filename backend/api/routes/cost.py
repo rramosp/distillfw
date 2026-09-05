@@ -29,3 +29,20 @@ def get_cost_estimate(
     if not est:
         raise HTTPException(status_code=404, detail="No cost estimate found. Run probe first.")
     return est
+
+
+@router.post("/{project_id}/stop")
+def stop_cost_probe(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return cost_probe_service.stop(bucket, project_id)
+
+
+@router.post("/{project_id}/clear")
+def clear_cost_estimate(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return cost_probe_service.clear(bucket, project_id)
+

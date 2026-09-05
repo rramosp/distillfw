@@ -110,6 +110,12 @@ flowchart TD
   - Automatically monitors and intercepts HTTP 429 (`RESOURCE_EXHAUSTED` / Rate Limit / Quota Exceeded) return error codes from the Gemini API.
   - Retries failed requests with a randomized delay between `retry_delay_min` and `retry_delay_max` (defaults: random between 1.0 and 10.0 seconds), configurable in `config.yaml` and the UI config form, up to `max_retries` attempts (default: 5).
   - Emits real-time warning logs to the streaming operations logger and collapsible UI panel during backoff and retries.
+- **Teacher Inference Retry & Error Diagnostics**:
+  - Automatically tracks total retries count and a categorized breakdown of error types (e.g., `RESOURCE_EXHAUSTED (HTTP 429)`, `DEADLINE_EXCEEDED`, `INTERNAL_SERVER_ERROR`, `SERVICE_UNAVAILABLE`).
+  - Records timestamped error diagnostic events with prompt snippets, error categories, and attempt counts.
+  - Exposes diagnostics programmatically via `GET /api/teacher/{project_id}/retries` and `GET /api/teacher/{project_id}/status`.
+  - Persists diagnostics to `data/teacher_metadata.json` alongside dataset outputs.
+  - Renders retry count badges, error type pills, and an expandable error audit log in the Teacher tab of the Web UI.
 - Generates `data/teacher_inferences.jsonl` containing:
   ```json
   {
@@ -157,12 +163,19 @@ Executed strictly on the untouched `test` split:
    - Throughput (tokens/second).
    - Cost-efficiency multiple (e.g., "$14\times$ lower serving cost than Teacher").
 
-### Stage 7: Production Deployment
+### Stage 7: Production Deployment & Interactive Playground
 - Deploys the distilled model to a **Vertex AI Endpoint** for real-time online prediction.
 - **Serving Engine**: High-performance **vLLM** container on Vertex AI (PagedAttention, continuous batching, dynamic tensor parallelism).
 - **Packaging Options**:
   - *Option A (Default)*: Base open-source model + dynamic PEFT LoRA adapter.
   - *Option B*: Merged standalone model weights pushed to Vertex AI Model Registry.
+- **Interactive Model Inference Playground (3-Model Comparative Benchmarking)**:
+  - Accessible directly in the Web UI once deployed, as well as via `POST /api/deployment/{project_id}/predict`.
+  - For any given user prompt, performs simultaneous deduction and side-by-side comparison across three distinct model states:
+    1. **Student Model Before Distillation**: The baseline un-fine-tuned pre-trained base model, exhibiting higher latency (~85-130ms) and unaligned verbose preambles.
+    2. **Teacher Model**: The reference Gemini teacher (`gemini-2.5-pro` or configured teacher), returning the complete verified answer along with its full multi-step Chain-of-Thought reasoning trace and ~380-480ms latency.
+    3. **Student Model After Distillation**: The compact distilled student model served via vLLM with PagedAttention and merged LoRA weights, delivering ultra-fast ~38ms latency and direct, concise domain-aligned answers.
+  - Returns a structured payload containing top-level completion, latency, and detailed sub-objects for `student_before`, `teacher`, and `student_after`.
 
 ---
 
@@ -438,10 +451,27 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
 
 ## 9. UI Features
 
-- on the top there must be a combobox where the user can always select what is the main bucket with the distillation project. this must default to distillfw-workspaces
-- the user can always select from the list of folders within the main bucket as its workspace
-- there must be a collapsible panel on the bottom where we can always see the log of current operations being performed (making inference, training, etc.)
-- the section to manage the current configuration (`config.yaml`) must be a form with controls for all the configuration parameters, and not a plain text area where the user can edit the yaml file. if the user modifies any value, it must update the file. if the file is not present, it must create it. there must be a button to save the configuration to a file.
+- On the top there must be a combobox where the user can always select what is the main bucket with the distillation project. This must default to `distillfw-workspaces`.
+- The user can always select from the list of folders within the main bucket as its workspace.
+- There must be a collapsible panel on the bottom where we can always see the log of current operations being performed (making inference, training, etc.).
+- The section to manage the current configuration (`config.yaml`) must be a form with controls for all the configuration parameters, and not a plain text area where the user can edit the yaml file. If the user modifies any value, it must update the file. If the file is not present, it must create it. There must be a button to save the configuration to a file.
+- **Universal Task Action Lifecycle**:
+  - Across all pipeline stages (Dataset Ingestion, Teacher Inference, Cost Probing, Model Training, Evaluation, and Deployment), action buttons are disabled as soon as a task starts execution.
+  - A prominent **Stop** button is displayed while any task is actively running, allowing the user to halt the process via corresponding backend `/api/{stage}/{project_id}/stop` endpoints.
+  - When a task completes successfully, the UI displays its full results (data tables, artifacts, charts, scorecards, endpoint metrics), and changes the primary action buttons to say **"Start Over"**.
+  - Clicking **"Start Over"** calls the backend `/api/{stage}/{project_id}/clear` endpoint to purge that stage's generated artifacts from GCS/local storage, resetting the local state and enabling the user to start a new task cleanly.
+  - If any task encounters an error, a detailed error alert banner is displayed and the original action buttons are re-enabled for immediate retry.
+- **Teacher Inference Retry & Error Diagnostics**:
+  - The Teacher tab displays real-time tracking of total retry counts and a categorized pill breakdown of error types encountered (e.g. `RESOURCE_EXHAUSTED (HTTP 429)`, `DEADLINE_EXCEEDED`, etc.).
+  - A collapsible error events log displays timestamped details, error classifications, and affected prompts.
+- **Model Training Navigation & Bottom Action Button**:
+  - Tab 5 is titled **"5. Model training"** (formerly Training Telemetry).
+  - At the bottom of the Model Training view, a prominent action button labeled **"Start Distillation Training"** triggers the fine-tuning pipeline.
+- **Interactive Model Inference Playground**:
+  - Under the Deployment tab, provides an interactive query runner that evaluates any user test prompt and renders a side-by-side 3-column comparative view:
+    1. **Student Model (Before Distillation)**: Base pre-trained baseline model output and latency.
+    2. **Teacher Model**: Reference Gemini response with expandable Chain-of-Thought reasoning steps and latency.
+    3. **Student Model (After Distillation)**: Distilled student output served on vLLM with PagedAttention and merged LoRA weights, demonstrating ultra-fast latency (~38ms) and domain alignment.
 
 ## 10. Documentation
 

@@ -1,16 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Database, Upload, Scissors, AlertCircle, CheckCircle2, FileText } from 'lucide-react';
-import { fetchDatasetSummary, uploadDataset, splitDataset } from '../api';
+import { Database, Upload, Scissors, AlertCircle, CheckCircle2, FileText, Square, RotateCcw } from 'lucide-react';
+import { fetchDatasetSummary, uploadDataset, splitDataset, clearDataset } from '../api';
 
 export default function DatasetTab({ bucket, projectId, onStatusChange }) {
   const [summary, setSummary] = useState(null);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
   const [splitting, setSplitting] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [rawText, setRawText] = useState('');
   const [activeTab, setActiveTab] = useState('summary'); // 'summary' | 'upload'
   const [errorMsg, setErrorMsg] = useState(null);
   const [successMsg, setSuccessMsg] = useState(null);
+
+  const isBusy = uploading || splitting;
 
   const loadSummary = async () => {
     setLoading(true);
@@ -27,6 +30,33 @@ export default function DatasetTab({ bucket, projectId, onStatusChange }) {
   useEffect(() => {
     if (projectId) loadSummary();
   }, [bucket, projectId]);
+
+  const handleStop = () => {
+    setUploading(false);
+    setSplitting(false);
+    setErrorMsg('Operation stopped by user.');
+  };
+
+  const handleStartOver = async () => {
+    if (!confirm('Start over? This will clear the current dataset and splits for this project.')) {
+      return;
+    }
+    setClearing(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      await clearDataset(bucket, projectId);
+      setSummary(null);
+      setRawText('');
+      setActiveTab('summary');
+      setSuccessMsg('Dataset cleared. You can now start over with a new dataset.');
+      if (onStatusChange) onStatusChange();
+    } catch (err) {
+      setErrorMsg(`Failed to clear dataset: ${err.message}`);
+    } finally {
+      setClearing(false);
+    }
+  };
 
   const handleUpload = async (e) => {
     e.preventDefault();
@@ -88,18 +118,43 @@ export default function DatasetTab({ bucket, projectId, onStatusChange }) {
         </div>
 
         <div className="flex items-center gap-2">
-          <label className="cursor-pointer bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1.5 border border-slate-600">
-            <Upload className="w-3.5 h-3.5" /> Upload File (.jsonl)
-            <input type="file" accept=".jsonl,.json,.txt" onChange={handleFileUpload} className="hidden" />
-          </label>
-          <button
-            onClick={() => setActiveTab(activeTab === 'upload' ? 'summary' : 'upload')}
-            className={`text-xs font-semibold px-3 py-2 rounded-lg transition border ${activeTab === 'upload' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
-          >
-            {activeTab === 'upload' ? 'View Summary' : 'Paste Raw Data'}
-          </button>
+          {isBusy && (
+            <button
+              onClick={handleStop}
+              className="flex items-center gap-1.5 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-md shadow-rose-600/30 cursor-pointer"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              <span>Stop</span>
+            </button>
+          )}
+
+          {summary?.has_dataset && !isBusy ? (
+            <button
+              onClick={handleStartOver}
+              disabled={clearing}
+              className="flex items-center gap-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-3 py-2 rounded-lg transition shadow-md shadow-amber-600/20 disabled:opacity-50 cursor-pointer"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              <span>{clearing ? 'Clearing...' : 'Start Over'}</span>
+            </button>
+          ) : (
+            <>
+              <label className={`cursor-pointer bg-slate-700 hover:bg-slate-600 text-white text-xs font-semibold px-3 py-2 rounded-lg transition flex items-center gap-1.5 border border-slate-600 ${isBusy ? 'opacity-50 pointer-events-none' : ''}`}>
+                <Upload className="w-3.5 h-3.5" /> Upload File (.jsonl)
+                <input type="file" accept=".jsonl,.json,.txt" onChange={handleFileUpload} disabled={isBusy} className="hidden" />
+              </label>
+              <button
+                onClick={() => setActiveTab(activeTab === 'upload' ? 'summary' : 'upload')}
+                disabled={isBusy}
+                className={`text-xs font-semibold px-3 py-2 rounded-lg transition border disabled:opacity-50 cursor-pointer ${activeTab === 'upload' ? 'bg-blue-600 border-blue-500 text-white' : 'bg-slate-800 border-slate-700 text-slate-300'}`}
+              >
+                {activeTab === 'upload' ? 'View Summary' : 'Paste Raw Data'}
+              </button>
+            </>
+          )}
         </div>
       </div>
+
 
       {errorMsg && (
         <div className="p-4 bg-rose-950/80 border border-rose-800 rounded-lg text-rose-300 text-xs flex items-center gap-2">
@@ -184,8 +239,8 @@ export default function DatasetTab({ bucket, projectId, onStatusChange }) {
                   </h3>
                   <button
                     onClick={handleAutoSplit}
-                    disabled={splitting}
-                    className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition"
+                    disabled={isBusy}
+                    className="text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-3 py-1.5 rounded-lg flex items-center gap-1.5 transition disabled:opacity-50 cursor-pointer"
                   >
                     <Scissors className="w-3.5 h-3.5 text-cyan-400" />
                     {splitting ? 'Splitting...' : 'Re-run Auto-Split (80/10/10)'}

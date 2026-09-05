@@ -20,7 +20,7 @@ models:
     trust_remote_code: false
 
 prompt:
-  instructions: "You are an expert mathematician. Solve this problem stating the final answer."
+  instructions: "You are an expert mathematician. Solve this problem stating the final answer as a single number."
   template: "{instructions}\n\nProblem:\n{prompt}\n\nSolution:"
 
 dataset:

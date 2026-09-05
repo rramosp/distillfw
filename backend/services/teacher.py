@@ -19,6 +19,54 @@ _thread_local = threading.local()
 class TeacherInferenceService:
     def __init__(self):
         self._active_jobs: Dict[str, Dict[str, Any]] = {}
+        self._stop_requested: Dict[str, bool] = {}
+        self._diagnostics: Dict[str, Dict[str, Any]] = {}
+        self._diag_lock = threading.RLock()
+
+
+    def _get_project_diagnostics(self, project_id: str) -> Dict[str, Any]:
+        with self._diag_lock:
+            if project_id not in self._diagnostics:
+                self._diagnostics[project_id] = {
+                    "retries_count": 0,
+                    "error_types": {},
+                    "errors_encountered": []
+                }
+            return self._diagnostics[project_id]
+
+    def _record_retry_error(self, project_id: Optional[str], err: Exception, prompt: str, attempt: int, delay: float):
+        cat = self._categorize_error(err)
+        if not project_id:
+            return
+        with self._diag_lock:
+            diag = self._get_project_diagnostics(project_id)
+            diag["retries_count"] += 1
+            diag["error_types"][cat] = diag["error_types"].get(cat, 0) + 1
+            diag["errors_encountered"].append({
+                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "attempt": attempt,
+                "error_type": cat,
+                "error_message": str(err)[:200],
+                "prompt_snippet": prompt[:50] + ("..." if len(prompt) > 50 else ""),
+                "retry_delay_seconds": round(delay, 2)
+            })
+
+    def _categorize_error(self, err: Exception) -> str:
+        """Categorizes exception into standardized error types."""
+        code = getattr(err, "code", None) or getattr(err, "status_code", None)
+        err_str = (str(err) + " " + repr(err)).lower()
+
+        if code in (429, "429") or any(k in err_str for k in ["429", "resource_exhausted", "too many requests", "quota exceeded"]):
+            return "RESOURCE_EXHAUSTED (HTTP 429)"
+        if code in (500, 502, 503, "500", "502", "503") or any(k in err_str for k in ["500", "502", "503", "internal server", "unavailable"]):
+            return "INTERNAL_SERVER_ERROR (HTTP 500/503)"
+        if any(k in err_str for k in ["timeout", "deadline_exceeded", "timed out"]):
+            return "DEADLINE_EXCEEDED (Timeout)"
+        if code in (401, 403, "401", "403") or any(k in err_str for k in ["permission_denied", "unauthenticated", "unauthorized"]):
+            return "PERMISSION_DENIED (HTTP 401/403)"
+        if code in (400, "400") or "invalid_argument" in err_str:
+            return "INVALID_ARGUMENT (HTTP 400)"
+        return f"API_ERROR ({type(err).__name__})"
 
     def normalize_teacher_response(self, row: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -146,6 +194,7 @@ class TeacherInferenceService:
                         low = min(retry_delay_min, retry_delay_max)
                         high = max(retry_delay_min, retry_delay_max)
                         delay = random.uniform(low, high)
+                        self._record_retry_error(project_id, e, prompt, attempt, delay)
                         operations_logger.log(
                             f"Teacher Gemini API returned 429 Too Many Requests (Rate Limit). Retrying in {delay:.2f}s (attempt {attempt}/{max_retries})...",
                             level="WARNING",
@@ -155,6 +204,19 @@ class TeacherInferenceService:
                         time.sleep(delay)
                         continue
                     else:
+                        cat = self._categorize_error(e)
+                        if project_id:
+                            with self._diag_lock:
+                                diag = self._get_project_diagnostics(project_id)
+                                diag["error_types"][cat] = diag["error_types"].get(cat, 0) + 1
+                                diag["errors_encountered"].append({
+                                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                                    "attempt": attempt,
+                                    "error_type": cat,
+                                    "error_message": str(e)[:200],
+                                    "prompt_snippet": prompt[:50] + ("..." if len(prompt) > 50 else ""),
+                                    "retry_delay_seconds": 0.0
+                                })
                         operations_logger.log(
                             f"Gemini API call failed ({e}), generating deterministic reference inference.",
                             level="WARNING",
@@ -187,6 +249,13 @@ class TeacherInferenceService:
         limit: Optional[int] = None
     ) -> None:
         start_time = datetime.now(timezone.utc).isoformat()
+        self._stop_requested[project_id] = False
+        with self._diag_lock:
+            self._diagnostics[project_id] = {
+                "retries_count": 0,
+                "error_types": {},
+                "errors_encountered": []
+            }
         storage_service.set_active_operation(bucket_name, project_id, "TEACHER_INFERENCE_RUNNING")
         operations_logger.log(f"Teacher inference job started for '{project_id}'", level="INFO", source="TEACHER", project_id=project_id)
 
@@ -260,10 +329,16 @@ class TeacherInferenceService:
 
             total_prompt_tokens = 0
             total_completion_tokens = 0
+            stopped_early = False
 
             if number_inference_threads <= 1:
                 enriched_rows = []
                 for idx, row in enumerate(rows, start=1):
+                    if self._stop_requested.get(project_id):
+                        operations_logger.log(f"Teacher inference stopped by user for '{project_id}'", level="WARNING", source="TEACHER", project_id=project_id)
+                        stopped_early = True
+                        break
+
                     prompt = row.get("prompt", "")
                     split = row.get("split", "train")
 
@@ -305,7 +380,11 @@ class TeacherInferenceService:
                 completed_count = 0
 
                 def _process_item(item_idx: int, item_row: Dict[str, Any]):
-                    nonlocal total_prompt_tokens, total_completion_tokens, completed_count
+                    nonlocal total_prompt_tokens, total_completion_tokens, completed_count, stopped_early
+                    if self._stop_requested.get(project_id):
+                        stopped_early = True
+                        return
+
                     p = item_row.get("prompt", "")
                     s = item_row.get("split", "train")
 
@@ -364,12 +443,44 @@ class TeacherInferenceService:
                     for f in futures:
                         f.result()
 
+            if stopped_early:
+                storage_service.record_history(
+                    bucket_name, project_id, "TEACHER_INFERENCE", "STOPPED",
+                    {"error": "Inference stopped by user"},
+                    "Teacher inference was stopped by user request.",
+                    start_time
+                )
+                return
+
+            valid_rows = [r for r in enriched_rows if r is not None]
             # Write data/teacher_inferences.jsonl
-            out_content = "\n".join(json.dumps(r) for r in enriched_rows) + "\n"
+            out_content = "\n".join(json.dumps(r) for r in valid_rows) + "\n"
             storage_service.write_file(bucket_name, f"{project_id}/data/teacher_inferences.jsonl", out_content)
 
+            # Persist teacher inference diagnostics & metadata
+            diag = self._get_project_diagnostics(project_id)
+            meta_content = {
+                "project_id": project_id,
+                "model_name": model_name,
+                "total_prompts": len(valid_rows),
+                "retries_count": diag.get("retries_count", 0),
+                "error_types": diag.get("error_types", {}),
+                "errors_encountered": diag.get("errors_encountered", []),
+                "number_inference_threads": number_inference_threads,
+                "retry_delay_min": retry_delay_min,
+                "retry_delay_max": retry_delay_max,
+                "total_prompt_tokens": total_prompt_tokens,
+                "total_completion_tokens": total_completion_tokens,
+                "completed_at": datetime.now(timezone.utc).isoformat()
+            }
+            storage_service.write_file(
+                bucket_name,
+                f"{project_id}/data/teacher_metadata.json",
+                json.dumps(meta_content, indent=2)
+            )
+
             operations_logger.log(
-                f"Teacher inference completed for {total} prompts ({'parallel' if number_inference_threads > 1 else 'sequential'}, {number_inference_threads} thread(s)). Total tokens: {total_prompt_tokens + total_completion_tokens}",
+                f"Teacher inference completed for {len(valid_rows)} prompts ({'parallel' if number_inference_threads > 1 else 'sequential'}, {number_inference_threads} thread(s)). Retries: {diag.get('retries_count', 0)}. Total tokens: {total_prompt_tokens + total_completion_tokens}",
                 level="SUCCESS",
                 source="TEACHER",
                 project_id=project_id
@@ -379,14 +490,16 @@ class TeacherInferenceService:
                 bucket_name, project_id, "TEACHER_INFERENCE", "SUCCESS",
                 {
                     "model_name": model_name,
-                    "total_prompts": total,
+                    "total_prompts": len(valid_rows),
+                    "retries_count": diag.get("retries_count", 0),
+                    "error_types": diag.get("error_types", {}),
                     "number_inference_threads": number_inference_threads,
                     "retry_delay_min": retry_delay_min,
                     "retry_delay_max": retry_delay_max,
                     "total_prompt_tokens": total_prompt_tokens,
                     "total_completion_tokens": total_completion_tokens
                 },
-                f"Generated teacher inferences with reasoning traces in data/teacher_inferences.jsonl ({number_inference_threads} thread(s))",
+                f"Generated teacher inferences with reasoning traces in data/teacher_inferences.jsonl ({number_inference_threads} thread(s), {diag.get('retries_count', 0)} retries)",
                 start_time
             )
 
@@ -401,14 +514,58 @@ class TeacherInferenceService:
         finally:
             storage_service.set_active_operation(bucket_name, project_id, None)
 
+    def stop(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        self._stop_requested[project_id] = True
+        storage_service.set_active_operation(bucket_name, project_id, None)
+        operations_logger.log(f"Stop requested for teacher inference in project '{project_id}'", level="WARNING", source="TEACHER", project_id=project_id)
+        return {"status": "STOPPED", "project_id": project_id}
+
+    def clear(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        self._stop_requested[project_id] = True
+        storage_service.set_active_operation(bucket_name, project_id, None)
+        storage_service.delete_file(bucket_name, f"{project_id}/data/teacher_inferences.jsonl")
+        storage_service.delete_file(bucket_name, f"{project_id}/data/teacher_metadata.json")
+        with self._diag_lock:
+            self._diagnostics.pop(project_id, None)
+        operations_logger.log(f"Teacher inference artifacts cleared for '{project_id}'", level="INFO", source="TEACHER", project_id=project_id)
+        return {"status": "CLEARED", "project_id": project_id}
+
+    def get_retries(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        meta_path = f"{project_id}/data/teacher_metadata.json"
+        if storage_service.file_exists(bucket_name, meta_path):
+            try:
+                meta = json.loads(storage_service.read_file(bucket_name, meta_path))
+                return {
+                    "retries_count": meta.get("retries_count", 0),
+                    "error_types": meta.get("error_types", {}),
+                    "errors_encountered": meta.get("errors_encountered", []),
+                    "model_name": meta.get("model_name")
+                }
+            except Exception:
+                pass
+        diag = self._get_project_diagnostics(project_id)
+        return {
+            "retries_count": diag.get("retries_count", 0),
+            "error_types": diag.get("error_types", {}),
+            "errors_encountered": diag.get("errors_encountered", [])
+        }
+
     def trigger_async(self, bucket_name: str, project_id: str, limit: Optional[int] = None) -> None:
         t = threading.Thread(target=self.run_inference_job, args=(bucket_name, project_id, limit), daemon=True)
         t.start()
 
     def get_inferences(self, bucket_name: str, project_id: str, limit: int = 10) -> Dict[str, Any]:
         p = f"{project_id}/data/teacher_inferences.jsonl"
+        meta = self.get_retries(bucket_name, project_id)
         if not storage_service.file_exists(bucket_name, p):
-            return {"exists": False, "total": 0, "samples": []}
+            return {
+                "exists": False,
+                "total": 0,
+                "samples": [],
+                "retries_count": meta.get("retries_count", 0),
+                "error_types": meta.get("error_types", {}),
+                "errors_encountered": meta.get("errors_encountered", [])
+            }
 
         content = storage_service.read_file(bucket_name, p)
         raw_rows = [json.loads(line) for line in content.splitlines() if line.strip()]
@@ -418,7 +575,10 @@ class TeacherInferenceService:
         return {
             "exists": True,
             "total": len(rows),
-            "samples": rows[:limit]
+            "samples": rows[:limit],
+            "retries_count": meta.get("retries_count", 0),
+            "error_types": meta.get("error_types", {}),
+            "errors_encountered": meta.get("errors_encountered", [])
         }
 
 

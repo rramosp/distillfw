@@ -17,6 +17,8 @@ from backend.services.logger import operations_logger
 class TrainingService:
     def __init__(self):
         self._active_jobs: Dict[str, Dict[str, Any]] = {}
+        self._stop_requested: Dict[str, bool] = {}
+
 
     def launch_training(
         self,
@@ -111,7 +113,17 @@ class TrainingService:
                 except Exception as trainer_err:
                     operations_logger.log(f"Direct trainer invocation encountered ({trainer_err}). Executing internal telemetry stream.", level="WARNING", source="TRAINING", project_id=project_id)
                     total_steps = 20
+                    stopped = False
                     for step in range(1, total_steps + 1):
+                        if self._stop_requested.get(project_id):
+                            operations_logger.log(f"Training stopped by user request for '{project_id}'", level="WARNING", source="TRAINING", project_id=project_id)
+                            stopped = True
+                            storage_service.write_file(
+                                bucket_name,
+                                f"{project_id}/training/heartbeat.json",
+                                json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), "status": "STOPPED", "step": step}, indent=2)
+                            )
+                            break
                         time.sleep(0.2)
                         train_loss = round(2.8 * (0.92 ** step) + 0.15, 4)
                         val_loss = round(2.9 * (0.93 ** step) + 0.18, 4)
@@ -142,6 +154,8 @@ class TrainingService:
                             f"{project_id}/training/heartbeat.json",
                             json.dumps(heartbeat, indent=2)
                         )
+                    if stopped:
+                        return
                     storage_service.write_file(
                         bucket_name,
                         f"{project_id}/training/heartbeat.json",
@@ -192,6 +206,27 @@ class TrainingService:
 
         return {"status": "STARTED", "mode": "local_worker", "job_id": f"local-{int(time.time())}"}
 
+    def stop(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        self._stop_requested[project_id] = True
+        storage_service.set_active_operation(bucket_name, project_id, None)
+        storage_service.write_file(
+            bucket_name,
+            f"{project_id}/training/heartbeat.json",
+            json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), "status": "STOPPED"}, indent=2)
+        )
+        operations_logger.log(f"Training stopped by user for project '{project_id}'", level="WARNING", source="TRAINING", project_id=project_id)
+        return {"status": "STOPPED", "project_id": project_id}
+
+    def clear(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        self._stop_requested[project_id] = True
+        storage_service.set_active_operation(bucket_name, project_id, None)
+        storage_service.delete_file(bucket_name, f"{project_id}/training/metrics.jsonl")
+        storage_service.delete_file(bucket_name, f"{project_id}/training/heartbeat.json")
+        storage_service.delete_file(bucket_name, f"{project_id}/training/final_adapter/adapter_model.safetensors")
+        storage_service.delete_file(bucket_name, f"{project_id}/training/final_adapter/adapter_config.json")
+        operations_logger.log(f"Training artifacts cleared for '{project_id}'", level="INFO", source="TRAINING", project_id=project_id)
+        return {"status": "CLEARED", "project_id": project_id}
+
     def get_metrics(self, bucket_name: str, project_id: str) -> List[Dict[str, Any]]:
         metrics_file = f"{project_id}/training/metrics.jsonl"
         if not storage_service.file_exists(bucket_name, metrics_file):
@@ -219,3 +254,4 @@ class TrainingService:
 
 
 training_service = TrainingService()
+

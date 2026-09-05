@@ -40,3 +40,20 @@ def get_training_heartbeat(
     bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
 ):
     return training_service.get_heartbeat(bucket, project_id)
+
+
+@router.post("/{project_id}/stop")
+def stop_training(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return training_service.stop(bucket, project_id)
+
+
+@router.post("/{project_id}/clear")
+def clear_training(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return training_service.clear(bucket, project_id)
+

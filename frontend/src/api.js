@@ -68,6 +68,13 @@ export async function fetchDatasetSummary(bucket, project_id) {
   return res.json();
 }
 
+export async function clearDataset(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/dataset/${encodeURIComponent(project_id)}/clear?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
 export async function runTeacherInference(bucket, project_id, limit = null) {
   const res = await fetch(`${API_BASE}/teacher/${encodeURIComponent(project_id)}/run?bucket=${encodeURIComponent(bucket)}`, {
     method: 'POST',
@@ -77,13 +84,46 @@ export async function runTeacherInference(bucket, project_id, limit = null) {
   return res.json();
 }
 
+export async function stopTeacherInference(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/teacher/${encodeURIComponent(project_id)}/stop?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
+export async function clearTeacherInferences(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/teacher/${encodeURIComponent(project_id)}/clear?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
 export async function fetchTeacherStatus(bucket, project_id, limit = 10) {
   const res = await fetch(`${API_BASE}/teacher/${encodeURIComponent(project_id)}/status?bucket=${encodeURIComponent(bucket)}&limit=${limit}`);
   return res.json();
 }
 
+export async function fetchTeacherRetries(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/teacher/${encodeURIComponent(project_id)}/retries?bucket=${encodeURIComponent(bucket)}`);
+  return res.json();
+}
+
 export async function runCostProbe(bucket, project_id) {
   const res = await fetch(`${API_BASE}/cost/${encodeURIComponent(project_id)}/probe?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
+export async function stopCostProbe(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/cost/${encodeURIComponent(project_id)}/stop?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
+export async function clearCostEstimate(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/cost/${encodeURIComponent(project_id)}/clear?bucket=${encodeURIComponent(bucket)}`, {
     method: 'POST'
   });
   return res.json();
@@ -100,6 +140,20 @@ export async function startTraining(bucket, project_id, dry_run = false) {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ dry_run })
+  });
+  return res.json();
+}
+
+export async function stopTraining(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/training/${encodeURIComponent(project_id)}/stop?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
+export async function clearTraining(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/training/${encodeURIComponent(project_id)}/clear?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
   });
   return res.json();
 }
@@ -121,6 +175,20 @@ export async function runEvaluation(bucket, project_id) {
   return res.json();
 }
 
+export async function stopEvaluation(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/evaluation/${encodeURIComponent(project_id)}/stop?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
+export async function clearEvaluation(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/evaluation/${encodeURIComponent(project_id)}/clear?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
 export async function fetchEvaluationResults(bucket, project_id) {
   const res = await fetch(`${API_BASE}/evaluation/${encodeURIComponent(project_id)}/results?bucket=${encodeURIComponent(bucket)}`);
   if (!res.ok) return null;
@@ -129,6 +197,20 @@ export async function fetchEvaluationResults(bucket, project_id) {
 
 export async function deployEndpoint(bucket, project_id) {
   const res = await fetch(`${API_BASE}/deployment/${encodeURIComponent(project_id)}/deploy?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
+export async function stopDeployment(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/deployment/${encodeURIComponent(project_id)}/stop?bucket=${encodeURIComponent(bucket)}`, {
+    method: 'POST'
+  });
+  return res.json();
+}
+
+export async function clearDeployment(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/deployment/${encodeURIComponent(project_id)}/clear?bucket=${encodeURIComponent(bucket)}`, {
     method: 'POST'
   });
   return res.json();
@@ -159,3 +241,4 @@ export async function clearLogs() {
   const res = await fetch(`${API_BASE}/logs/clear`, { method: 'POST' });
   return res.json();
 }
+

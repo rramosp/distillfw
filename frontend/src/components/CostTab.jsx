@@ -1,12 +1,14 @@
 import React, { useState, useEffect } from 'react';
-import { Calculator, Play, CheckCircle2, AlertTriangle, DollarSign, Clock, Cpu, Zap } from 'lucide-react';
-import { runCostProbe, fetchCostEstimate } from '../api';
+import { Calculator, Play, CheckCircle2, AlertTriangle, DollarSign, Clock, Cpu, Zap, Square, RotateCcw } from 'lucide-react';
+import { runCostProbe, fetchCostEstimate, stopCostProbe, clearCostEstimate } from '../api';
 
 export default function CostTab({ bucket, projectId, onStatusChange }) {
   const [estimate, setEstimate] = useState(null);
   const [loading, setLoading] = useState(true);
   const [probing, setProbing] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
+  const [successMsg, setSuccessMsg] = useState(null);
 
   const loadEstimate = async () => {
     setLoading(true);
@@ -27,14 +29,46 @@ export default function CostTab({ bucket, projectId, onStatusChange }) {
   const handleRunProbe = async () => {
     setProbing(true);
     setErrorMsg(null);
+    setSuccessMsg(null);
     try {
       const res = await runCostProbe(bucket, projectId);
       setEstimate(res);
+      setSuccessMsg('Cost and hardware probe completed successfully!');
       if (onStatusChange) onStatusChange();
     } catch (err) {
       setErrorMsg(`Probe failed: ${err.message}`);
     } finally {
       setProbing(false);
+    }
+  };
+
+  const handleStop = async () => {
+    try {
+      await stopCostProbe(bucket, projectId);
+      setProbing(false);
+      setErrorMsg('Hardware probe stopped by user.');
+      if (onStatusChange) onStatusChange();
+    } catch (err) {
+      setErrorMsg(`Failed to stop probe: ${err.message}`);
+    }
+  };
+
+  const handleStartOver = async () => {
+    if (!confirm('Start over? This will clear the cost estimation and hardware scorecard.')) {
+      return;
+    }
+    setClearing(true);
+    setErrorMsg(null);
+    setSuccessMsg(null);
+    try {
+      await clearCostEstimate(bucket, projectId);
+      setEstimate(null);
+      setSuccessMsg('Cost estimate cleared. You can now re-run the hardware probe.');
+      if (onStatusChange) onStatusChange();
+    } catch (err) {
+      setErrorMsg(`Failed to clear cost estimate: ${err.message}`);
+    } finally {
+      setClearing(false);
     }
   };
 
@@ -52,15 +86,44 @@ export default function CostTab({ bucket, projectId, onStatusChange }) {
           </p>
         </div>
 
-        <button
-          onClick={handleRunProbe}
-          disabled={probing}
-          className="flex items-center gap-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-amber-500/20 disabled:opacity-50"
-        >
-          <Play className="w-4 h-4" />
-          {probing ? 'Probing Hardware Profile...' : 'Run Cost & Hardware Probe'}
-        </button>
+        <div className="flex items-center gap-2">
+          {probing ? (
+            <button
+              onClick={handleStop}
+              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-rose-600/30 cursor-pointer"
+            >
+              <Square className="w-4 h-4 fill-current" />
+              <span>Stop Probe</span>
+            </button>
+          ) : estimate ? (
+            <button
+              onClick={handleStartOver}
+              disabled={clearing}
+              className="flex items-center gap-2 bg-amber-600 hover:bg-amber-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-amber-600/20 disabled:opacity-50 cursor-pointer"
+            >
+              <RotateCcw className="w-4 h-4" />
+              <span>{clearing ? 'Clearing...' : 'Start Over'}</span>
+            </button>
+          ) : (
+            <button
+              onClick={handleRunProbe}
+              disabled={probing}
+              className="flex items-center gap-2 bg-gradient-to-r from-amber-600 to-orange-600 hover:from-amber-500 hover:to-orange-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-amber-500/20 disabled:opacity-50 cursor-pointer"
+            >
+              <Play className="w-4 h-4" />
+              <span>Run Cost & Hardware Probe</span>
+            </button>
+          )}
+        </div>
       </div>
+
+      {successMsg && (
+        <div className="p-4 bg-emerald-950/80 border border-emerald-800 rounded-lg text-emerald-300 text-xs flex items-center gap-2">
+          <CheckCircle2 className="w-4 h-4 shrink-0" />
+          <span>{successMsg}</span>
+        </div>
+      )}
+
 
       {errorMsg && (
         <div className="p-4 bg-rose-950/80 border border-rose-800 rounded-lg text-rose-300 text-xs flex items-center gap-2">

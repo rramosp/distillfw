@@ -182,5 +182,12 @@ class DatasetService:
             "samples": rows[:5]
         }
 
+    def clear(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        storage_service.delete_file(bucket_name, f"{project_id}/data/split_dataset.jsonl")
+        storage_service.delete_file(bucket_name, f"{project_id}/data/input_dataset.jsonl")
+        operations_logger.log(f"Cleared dataset for project '{project_id}'", level="INFO", source="DATASET", project_id=project_id)
+        return {"status": "CLEARED", "project_id": project_id}
+
 
 dataset_service = DatasetService()
+

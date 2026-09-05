@@ -201,5 +201,16 @@ class CostProbeService:
             return None
         return json.loads(storage_service.read_file(bucket_name, path))
 
+    def stop(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        storage_service.set_active_operation(bucket_name, project_id, None)
+        operations_logger.log(f"Cost probe stopped for '{project_id}'", level="WARNING", source="COST_PROBE", project_id=project_id)
+        return {"status": "STOPPED", "project_id": project_id}
+
+    def clear(self, bucket_name: str, project_id: str) -> Dict[str, Any]:
+        storage_service.delete_file(bucket_name, f"{project_id}/cost/cost_estimate.json")
+        operations_logger.log(f"Cleared cost estimation for project '{project_id}'", level="INFO", source="COST_PROBE", project_id=project_id)
+        return {"status": "CLEARED", "project_id": project_id}
+
 
 cost_probe_service = CostProbeService()
+

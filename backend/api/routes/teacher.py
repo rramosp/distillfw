@@ -31,3 +31,28 @@ def get_teacher_status(
     bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
 ):
     return teacher_service.get_inferences(bucket, project_id, limit=limit)
+
+
+@router.get("/{project_id}/retries")
+def get_teacher_retries(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return teacher_service.get_retries(bucket, project_id)
+
+
+@router.post("/{project_id}/stop")
+def stop_teacher_inference(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return teacher_service.stop(bucket, project_id)
+
+
+@router.post("/{project_id}/clear")
+def clear_teacher_inferences(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return teacher_service.clear(bucket, project_id)
+

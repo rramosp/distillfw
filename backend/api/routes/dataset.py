@@ -70,3 +70,12 @@ def get_dataset_summary(
     bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
 ):
     return dataset_service.get_summary(bucket, project_id)
+
+
+@router.post("/{project_id}/clear")
+def clear_dataset(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return dataset_service.clear(bucket, project_id)
+

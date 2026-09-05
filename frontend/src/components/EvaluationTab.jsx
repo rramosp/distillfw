@@ -1,11 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { Award, Play, RefreshCw, BarChart2, ShieldCheck, Zap, AlertCircle, CheckCircle2 } from 'lucide-react';
-import { runEvaluation, fetchEvaluationResults } from '../api';
+import { Award, Play, RefreshCw, BarChart2, ShieldCheck, Zap, AlertCircle, CheckCircle2, Square, RotateCcw } from 'lucide-react';
+import { runEvaluation, stopEvaluation, clearEvaluation, fetchEvaluationResults } from '../api';
 
 export default function EvaluationTab({ bucket, projectId, onStatusChange }) {
   const [results, setResults] = useState(null);
   const [loading, setLoading] = useState(true);
   const [evaluating, setEvaluating] = useState(false);
+  const [stopping, setStopping] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
   const loadResults = async () => {
@@ -38,6 +39,30 @@ export default function EvaluationTab({ bucket, projectId, onStatusChange }) {
     }
   };
 
+  const handleStop = async () => {
+    setStopping(true);
+    try {
+      await stopEvaluation(bucket, projectId);
+      setTimeout(loadResults, 1000);
+      if (onStatusChange) onStatusChange();
+    } catch (err) {
+      setErrorMsg(`Failed to stop evaluation: ${err.message}`);
+    } finally {
+      setStopping(false);
+    }
+  };
+
+  const handleClear = async () => {
+    try {
+      await clearEvaluation(bucket, projectId);
+      setResults(null);
+      setErrorMsg(null);
+      if (onStatusChange) onStatusChange();
+    } catch (err) {
+      setErrorMsg(`Failed to clear evaluation state: ${err.message}`);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-16">
       {/* Header card */}
@@ -53,14 +78,33 @@ export default function EvaluationTab({ bucket, projectId, onStatusChange }) {
         </div>
 
         <div className="flex items-center gap-3">
-          <button
-            onClick={handleRunEval}
-            disabled={evaluating}
-            className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-emerald-500/20 disabled:opacity-50"
-          >
-            <Play className="w-4 h-4" />
-            {evaluating ? 'Evaluating...' : 'Run 3-Tier Evaluation'}
-          </button>
+          {evaluating ? (
+            <button
+              onClick={handleStop}
+              disabled={stopping}
+              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-rose-500/20"
+            >
+              <Square className="w-4 h-4 fill-current" />
+              {stopping ? 'Stopping...' : 'Stop Evaluation'}
+            </button>
+          ) : results ? (
+            <button
+              onClick={handleClear}
+              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-4 py-2.5 rounded-lg border border-slate-600 shadow-md"
+            >
+              <RotateCcw className="w-4 h-4 text-slate-300" />
+              Start Over
+            </button>
+          ) : (
+            <button
+              onClick={handleRunEval}
+              disabled={evaluating}
+              className="flex items-center gap-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-emerald-500/20 disabled:opacity-50"
+            >
+              <Play className="w-4 h-4" />
+              Run 3-Tier Evaluation
+            </button>
+          )}
           <button
             onClick={loadResults}
             className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 rounded-lg"

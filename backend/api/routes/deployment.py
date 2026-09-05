@@ -54,3 +54,20 @@ def predict(
         )
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
+
+
+@router.post("/{project_id}/stop")
+def stop_deployment(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return deployment_service.stop(bucket, project_id)
+
+
+@router.post("/{project_id}/clear")
+def clear_deployment(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return deployment_service.clear(bucket, project_id)
+

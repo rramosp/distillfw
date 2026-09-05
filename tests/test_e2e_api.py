@@ -9,6 +9,21 @@ BUCKET = "distillfw-workspaces"
 PROJECT = "distill-gemma-math-v1"
 
 
+@pytest.fixture(autouse=True, scope="module")
+def setup_workspace():
+    from backend.services.storage import storage_service
+    from backend.services.dataset import dataset_service
+
+    with open("examples/sample_config.yaml", "r") as f:
+        cfg_text = f.read()
+    with open("examples/sample_dataset.jsonl", "r") as f:
+        ds_text = f.read()
+
+    storage_service.write_file(BUCKET, f"{PROJECT}/config.yaml", cfg_text)
+    dataset_service.ingest_and_split(BUCKET, PROJECT, ds_text)
+    yield
+
+
 def test_healthz():
     res = client.get("/healthz")
     assert res.status_code == 200
@@ -112,6 +127,59 @@ def test_deployment_and_predict():
     pred_data = pred_res.json()
     assert pred_data["completion"] == "270"
     assert "latency_ms" in pred_data
+    # 3-Model Comparison verification
+    assert "student_before" in pred_data
+    assert "teacher" in pred_data
+    assert "student_after" in pred_data
+    assert "270" in pred_data["student_before"]["completion"]
+    assert pred_data["teacher"]["completion"] == "270"
+    assert "thinking" in pred_data["teacher"]
+    assert pred_data["student_after"]["completion"] == "270"
+    assert pred_data["student_after"]["serving_framework"] == "vllm"
+
+
+def test_teacher_retries_diagnostics():
+    retries_res = client.get(f"/api/teacher/{PROJECT}/retries?bucket={BUCKET}")
+    assert retries_res.status_code == 200
+    r_data = retries_res.json()
+    assert "retries_count" in r_data
+    assert "error_types" in r_data
+    assert "errors_encountered" in r_data
+
+    status_res = client.get(f"/api/teacher/{PROJECT}/status?bucket={BUCKET}")
+    assert status_res.status_code == 200
+    s_data = status_res.json()
+    assert "retries_count" in s_data
+    assert "error_types" in s_data
+
+
+def test_stop_and_clear_lifecycle():
+    LIFECYCLE_PROJECT = "distill-test-lifecycle"
+    from backend.services.storage import storage_service
+    from backend.services.dataset import dataset_service
+
+    with open("examples/sample_config.yaml", "r") as f:
+        cfg_text = f.read()
+    with open("examples/sample_dataset.jsonl", "r") as f:
+        ds_text = f.read()
+
+    storage_service.write_file(BUCKET, f"{LIFECYCLE_PROJECT}/config.yaml", cfg_text)
+    dataset_service.ingest_and_split(BUCKET, LIFECYCLE_PROJECT, ds_text)
+
+    # Test stop endpoints
+    assert client.post(f"/api/teacher/{LIFECYCLE_PROJECT}/stop?bucket={BUCKET}").status_code == 200
+    assert client.post(f"/api/cost/{LIFECYCLE_PROJECT}/stop?bucket={BUCKET}").status_code == 200
+    assert client.post(f"/api/training/{LIFECYCLE_PROJECT}/stop?bucket={BUCKET}").status_code == 200
+    assert client.post(f"/api/evaluation/{LIFECYCLE_PROJECT}/stop?bucket={BUCKET}").status_code == 200
+    assert client.post(f"/api/deployment/{LIFECYCLE_PROJECT}/stop?bucket={BUCKET}").status_code == 200
+
+    # Test clear endpoints (clearing artifacts to start over)
+    assert client.post(f"/api/deployment/{LIFECYCLE_PROJECT}/clear?bucket={BUCKET}").status_code == 200
+    assert client.post(f"/api/evaluation/{LIFECYCLE_PROJECT}/clear?bucket={BUCKET}").status_code == 200
+    assert client.post(f"/api/training/{LIFECYCLE_PROJECT}/clear?bucket={BUCKET}").status_code == 200
+    assert client.post(f"/api/cost/{LIFECYCLE_PROJECT}/clear?bucket={BUCKET}").status_code == 200
+    assert client.post(f"/api/teacher/{LIFECYCLE_PROJECT}/clear?bucket={BUCKET}").status_code == 200
+    assert client.post(f"/api/dataset/{LIFECYCLE_PROJECT}/clear?bucket={BUCKET}").status_code == 200
 
 
 def test_history_and_logs():
@@ -124,3 +192,4 @@ def test_history_and_logs():
     assert logs_res.status_code == 200
     logs = logs_res.json()
     assert len(logs) > 0
+

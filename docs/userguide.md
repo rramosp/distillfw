@@ -26,14 +26,18 @@ When you open the Web UI at `http://localhost:8080`:
 2. **Tab Navigation**:
    - `Pipeline Overview`: High-level 7-stage workflow pipeline diagram.
    - `1. Config Form`: Interactive controls for all parameters in `config.yaml`.
-   - `2. Dataset Split`: Upload and inspect JSONL dataset, auto-split into train/val/test.
-   - `3. Teacher CoT`: Run Gemini inference and inspect thinking traces and completions.
+   - `2. Dataset Split`: Upload and inspect JSONL dataset, auto-split into train/val/test splits.
+   - `3. Teacher CoT`: Run Gemini inference with parallel threads, rate-limit backoff, retry tracking, and CoT inspection.
    - `4. Hardware Probe`: Budget scorecard and VRAM safety sign-off.
-   - `5. Training Telemetry`: Launch custom training and view real-time loss and GPU curves.
+   - `5. Model training`: Launch custom training, stream real-time loss and GPU curves, and trigger via bottom "Start Distillation Training" button.
    - `6. 3-Tier Eval`: Benchmark lexical, Gemini judge, and latency percentiles.
-   - `7. vLLM Deploy`: Deploy model and test queries interactively in the playground.
+   - `7. vLLM Deploy`: Deploy model and test queries in the 3-model comparative playground.
    - `Audit History`: Chronological execution log from `history.json`.
-3. **Collapsible Bottom Panel**:
+3. **Universal Task Action Lifecycle**:
+   - **Running State**: As soon as any process starts (dataset split, teacher inference, cost probe, training, eval, deployment), action buttons are disabled and a prominent **Stop** button is displayed to allow immediate cancellation.
+   - **Completed State**: Once a task finishes, its full results (data tables, artifacts, metrics, curves, or endpoints) are displayed, and action buttons switch to **"Start Over"**. Clicking "Start Over" calls the backend `/clear` endpoint to purge the stage's artifacts and reset state cleanly.
+   - **Error State**: If a failure occurs, an alert banner displays the exact error message, and original action buttons are re-enabled for immediate retry.
+4. **Collapsible Bottom Panel**:
    - Click the bottom bar at any time to expand the live streaming log of operations (inference, training, evaluation, deployment).
 
 ---
@@ -388,13 +392,15 @@ curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
 Extracts reference completions (`teacher_response`) and chain-of-thought traces (`teacher_thinking`) using Vertex AI Gemini.
 
 - **Parallel Inference Acceleration**: Inferences are parallelized via `number_inference_threads` (defined in `config.yaml` and the UI config form). Set $\ge 1$; when set to `1`, inference executes sequentially without parallelism. Output dataset ordering in `data/teacher_inferences.jsonl` is strictly preserved.
-- **429 Rate Limit Backoff**: Automatically catches HTTP 429 (`RESOURCE_EXHAUSTED` / rate limit / quota exceeded) return codes, retrying with a randomized delay between `retry_delay_min` and `retry_delay_max` (defaults: random between 1.0s and 10.0s) up to `max_retries` (default: 5).
+- **429 Rate Limit Backoff & Retry Diagnostics**: Automatically catches HTTP 429 (`RESOURCE_EXHAUSTED` / rate limit / quota exceeded) return codes, retrying with a randomized delay between `retry_delay_min` and `retry_delay_max` (defaults: random between 1.0s and 10.0s) up to `max_retries` (default: 5).
+- **Diagnostics & Error Tracking**: Tracks total retries count and a breakdown of error types (e.g. `RESOURCE_EXHAUSTED (HTTP 429)`, `DEADLINE_EXCEEDED`, `INTERNAL_SERVER_ERROR`), exposing them via the API and displaying them as badges, status pills, and an audit table in the UI.
 
 #### A. Using the Web UI
 1. Navigate to **3. Teacher CoT**.
 2. Select the prompt limit (or choose **All Prompts**) and click **Run Gemini Inference**.
-3. Open the collapsible bottom panel to view real-time batch progress.
-4. Once completed, browse the interactive **Inference Samples** list:
+3. While running, action buttons are disabled and a red **Stop Inference** button appears.
+4. If retries or errors occur, observe the **Retries Count** badge and categorized error type pills incrementing in real time. Click **Show Error Events** to inspect error logs.
+5. Once completed, the primary action button changes to **Start Over** (which clears the generated teacher inferences if you wish to re-run). Browse the interactive **Inference Samples** list:
    - Click on any problem to view the **Input Prompt**, Gemini's step-by-step **Chain-of-Thought (teacher_thinking)**, and the verified **Teacher Reference Answer**.
 
 #### B. Using the REST API
@@ -402,27 +408,48 @@ Extracts reference completions (`teacher_response`) and chain-of-thought traces 
 ##### Localhost (`http://localhost:8080`):
 
 ```bash
-# Trigger teacher inference
+# 1. Trigger teacher inference
 curl -X POST "http://localhost:8080/api/teacher/distill-gemma-math-v1/run?bucket=distillfw-workspaces" \
   -H "Content-Type: application/json" \
   -d '{"limit": 20}'
 
-# Fetch generated inferences and reasoning samples
+# 2. Stop ongoing teacher inference (if needed)
+curl -X POST "http://localhost:8080/api/teacher/distill-gemma-math-v1/stop?bucket=distillfw-workspaces"
+
+# 3. Fetch retry diagnostics and error type breakdown
+curl -s "http://localhost:8080/api/teacher/distill-gemma-math-v1/retries?bucket=distillfw-workspaces" | jq .
+
+# 4. Fetch generated inferences and status
 curl -s "http://localhost:8080/api/teacher/distill-gemma-math-v1/status?bucket=distillfw-workspaces&limit=3" | jq .
+
+# 5. Clear inferences to start over
+curl -X POST "http://localhost:8080/api/teacher/distill-gemma-math-v1/clear?bucket=distillfw-workspaces"
 ```
 
 ##### Deployed in GCP (Cloud Run with `Authorization` Header):
 
 ```bash
-# Trigger teacher inference
+# 1. Trigger teacher inference
 curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/teacher/distill-gemma-math-v1/run?bucket=distillfw-workspaces" \
   -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
   -d '{"limit": 20}'
 
-# Fetch generated inferences and reasoning samples
+# 2. Stop ongoing teacher inference (if needed)
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/teacher/distill-gemma-math-v1/stop?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
+
+# 3. Fetch retry diagnostics and error type breakdown
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/teacher/distill-gemma-math-v1/retries?bucket=distillfw-workspaces" | jq .
+
+# 4. Fetch generated inferences and status
 curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/teacher/distill-gemma-math-v1/status?bucket=distillfw-workspaces&limit=3" | jq .
+
+# 5. Clear inferences to start over
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/teacher/distill-gemma-math-v1/clear?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
 ```
 
 ---
@@ -465,54 +492,69 @@ curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
 
 ---
 
-### Stage 5: Vertex AI Custom Training & Live Telemetry
+### Stage 5: Model Training (Custom Training & Telemetry)
 
 Launches training using `transformers.Trainer` with PEFT LoRA and the custom `GCSProgressCallback`.
 
 #### A. Using the Web UI
-1. Navigate to **5. Training Telemetry**.
+1. Navigate to **5. Model training** in the tab bar.
 2. If running locally without GCP GPU quotas, check the **Dry-run / Local Worker** box; otherwise, leave unchecked to submit to Vertex AI Custom Training.
-3. Click **Launch Training Job**.
-4. The live telemetry dashboard streams real-time updates:
+3. Click **Launch Training Job** in the header or scroll to the bottom and click the prominent **start distillation training** button.
+4. As training begins, action buttons are disabled and replaced with a **Stop Training** button to allow stopping if necessary.
+5. The live telemetry dashboard streams real-time updates:
    - **Worker Heartbeat**: Indicates active worker liveness and timestamp.
    - **Training Loss Curve**: Live SVG chart displaying train loss and eval loss over global steps.
    - **Hardware Utilization**: Live progress bars displaying GPU compute utilization % and VRAM allocated (GB).
    - **Throughput**: Tokens processed per second.
-5. Upon completion, the status badge transitions to **`TRAINING_COMPLETED`** and the PEFT adapter weights (`adapter_model.safetensors`) are stored in `training/final_adapter/`.
+6. Upon completion, the status badge transitions to **`TRAINING_COMPLETED`**, the PEFT adapter weights (`adapter_model.safetensors`) are stored in `training/final_adapter/`, and the buttons switch to **Start Over** (which clears metrics and checkpoints if you wish to launch a new training run).
 
 #### B. Using the REST API
 
 ##### Localhost (`http://localhost:8080`):
 
 ```bash
-# Launch training job
+# 1. Launch training job
 curl -X POST "http://localhost:8080/api/training/distill-gemma-math-v1/start?bucket=distillfw-workspaces" \
   -H "Content-Type: application/json" \
   -d '{"dry_run": true}'
 
-# Poll live metrics
+# 2. Stop ongoing training (if needed)
+curl -X POST "http://localhost:8080/api/training/distill-gemma-math-v1/stop?bucket=distillfw-workspaces"
+
+# 3. Poll live metrics
 curl -s "http://localhost:8080/api/training/distill-gemma-math-v1/metrics?bucket=distillfw-workspaces" | jq '.[-1]'
 
-# Check worker heartbeat
+# 4. Check worker heartbeat
 curl -s "http://localhost:8080/api/training/distill-gemma-math-v1/heartbeat?bucket=distillfw-workspaces" | jq .
+
+# 5. Clear training state to start over
+curl -X POST "http://localhost:8080/api/training/distill-gemma-math-v1/clear?bucket=distillfw-workspaces"
 ```
 
 ##### Deployed in GCP (Cloud Run with `Authorization` Header):
 
 ```bash
-# Launch training job
+# 1. Launch training job
 curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/training/distill-gemma-math-v1/start?bucket=distillfw-workspaces" \
   -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
   -d '{"dry_run": true}'
 
-# Poll live metrics
+# 2. Stop ongoing training (if needed)
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/training/distill-gemma-math-v1/stop?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
+
+# 3. Poll live metrics
 curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/training/distill-gemma-math-v1/metrics?bucket=distillfw-workspaces" | jq '.[-1]'
 
-# Check worker heartbeat
+# 4. Check worker heartbeat
 curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/training/distill-gemma-math-v1/heartbeat?bucket=distillfw-workspaces" | jq .
+
+# 5. Clear training state to start over
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/training/distill-gemma-math-v1/clear?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
 ```
 
 ---
@@ -528,78 +570,107 @@ Runs evaluation exclusively on the quarantined `test` split.
    - **Tier 1 (Lexical & Task Metrics)**: ROUGE-1, ROUGE-2, ROUGE-L, BLEU, Exact Match, and JSON format compliance.
    - **Tier 2 (LLM-as-a-Judge)**: Gemini Teacher rubric (1–5 scale) for Correctness, Instruction Adherence, Reasoning Completeness, Semantic Similarity, and Safety.
    - **Tier 3 (Operational Benchmarking)**: Latency percentiles ($p_{50}$, $p_{95}$, $p_{99}$ in ms), serving throughput, and speedup multiple compared to the Teacher.
+4. While evaluating, buttons are disabled and a **Stop Evaluation** button appears.
+5. Once completed, the header button transitions to **Start Over** (which clears the evaluation results from storage).
 
 #### B. Using the REST API
 
 ##### Localhost (`http://localhost:8080`):
 
 ```bash
-# Trigger 3-tier evaluation
+# 1. Trigger 3-tier evaluation
 curl -X POST "http://localhost:8080/api/evaluation/distill-gemma-math-v1/run?bucket=distillfw-workspaces"
 
-# Fetch evaluation results
+# 2. Stop ongoing evaluation (if needed)
+curl -X POST "http://localhost:8080/api/evaluation/distill-gemma-math-v1/stop?bucket=distillfw-workspaces"
+
+# 3. Fetch evaluation results
 curl -s "http://localhost:8080/api/evaluation/distill-gemma-math-v1/results?bucket=distillfw-workspaces" | jq .
+
+# 4. Clear evaluation to start over
+curl -X POST "http://localhost:8080/api/evaluation/distill-gemma-math-v1/clear?bucket=distillfw-workspaces"
 ```
 
 ##### Deployed in GCP (Cloud Run with `Authorization` Header):
 
 ```bash
-# Trigger 3-tier evaluation
+# 1. Trigger 3-tier evaluation
 curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/evaluation/distill-gemma-math-v1/run?bucket=distillfw-workspaces" \
   -H "Authorization: Bearer $(gcloud auth print-identity-token)"
 
-# Fetch evaluation results
+# 2. Stop ongoing evaluation (if needed)
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/evaluation/distill-gemma-math-v1/stop?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
+
+# 3. Fetch evaluation results
 curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/evaluation/distill-gemma-math-v1/results?bucket=distillfw-workspaces" | jq .
+
+# 4. Clear evaluation to start over
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/evaluation/distill-gemma-math-v1/clear?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
 ```
 
 ---
 
-### Stage 7: Vertex AI Production vLLM Deployment & Playground
+### Stage 7: Vertex AI Production vLLM Deployment & 3-Model Playground
 
-Deploys the distilled model to a Vertex AI Endpoint running vLLM and tests inference live.
+Deploys the distilled model to a Vertex AI Endpoint running vLLM and benchmarks inference live across three model perspectives.
 
 #### A. Using the Web UI
 1. Navigate to **7. vLLM Deploy**.
-2. Click **Deploy to Vertex AI Endpoint**.
-3. The metadata card displays the active Endpoint URI, serving framework (`vLLM`), base model, and machine type.
+2. Click **Deploy to Vertex AI Endpoint**. While deploying, action buttons are disabled and a **Stop Deployment** button appears.
+3. Once active, the metadata card displays the active Endpoint URI, serving framework (`vLLM`), base model, and machine type. The header button changes to **Start Over** (which undeploys the endpoint and clears metadata).
 4. Scroll to the **Interactive Model Inference Playground**:
    - Enter a test query: e.g. `"What is 25 multiplied by 14?"`
    - Click **Predict**.
-   - Inspect the distilled model's answer (`350`) and the measured inference latency (e.g. `38.4 ms`).
+   - Review the responsive **3-Column Comparison Grid**:
+     1. **1. Student (Before)**: Base pre-trained model answer, higher latency (~120ms), unaligned verbose deduction.
+     2. **2. Teacher Model**: Gemini reference answer, expandable Chain-of-Thought reasoning steps, latency (~450ms).
+     3. **3. Student (After)**: Distilled student model running on vLLM, direct concise answer (`350`), and lightning-fast latency (~38ms, ~12x faster than Teacher).
 
 #### B. Using the REST API
 
 ##### Localhost (`http://localhost:8080`):
 
 ```bash
-# Deploy to Vertex AI Endpoint
+# 1. Deploy to Vertex AI Endpoint
 curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/deploy?bucket=distillfw-workspaces" | jq .
 
-# Check endpoint status
+# 2. Stop ongoing deployment (if needed)
+curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/stop?bucket=distillfw-workspaces"
+
+# 3. Check endpoint status
 curl -s "http://localhost:8080/api/deployment/distill-gemma-math-v1/status?bucket=distillfw-workspaces" | jq .
 
-# Send a test prediction query
+# 4. Send a test prediction query (returns 3-model comparison)
 curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/predict?bucket=distillfw-workspaces" \
   -H "Content-Type: application/json" \
   -d '{
     "prompt": "What is 25 multiplied by 14?",
     "temperature": 0.2
   }' | jq .
+
+# 5. Clear deployment to start over
+curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/clear?bucket=distillfw-workspaces"
 ```
 
 ##### Deployed in GCP (Cloud Run with `Authorization` Header):
 
 ```bash
-# Deploy to Vertex AI Endpoint
+# 1. Deploy to Vertex AI Endpoint
 curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/distill-gemma-math-v1/deploy?bucket=distillfw-workspaces" \
   -H "Authorization: Bearer $(gcloud auth print-identity-token)" | jq .
 
-# Check endpoint status
+# 2. Stop ongoing deployment (if needed)
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/distill-gemma-math-v1/stop?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
+
+# 3. Check endpoint status
 curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/distill-gemma-math-v1/status?bucket=distillfw-workspaces" | jq .
 
-# Send a test prediction query
+# 4. Send a test prediction query (returns 3-model comparison)
 curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/distill-gemma-math-v1/predict?bucket=distillfw-workspaces" \
   -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   -H "Content-Type: application/json" \
@@ -607,6 +678,10 @@ curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/d
     "prompt": "What is 25 multiplied by 14?",
     "temperature": 0.2
   }' | jq .
+
+# 5. Clear deployment to start over
+curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/distill-gemma-math-v1/clear?bucket=distillfw-workspaces" \
+  -H "Authorization: Bearer $(gcloud auth print-identity-token)"
 ```
 
 ---
