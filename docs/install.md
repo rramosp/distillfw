@@ -41,7 +41,7 @@ gcloud beta billing projects describe "$GCP_PROJECT_ID" --format="value(billingE
 ```
 
 ### 1.4. Required IAM Roles & Permissions
-The deploying user or service account must possess the following roles on the target project:
+The deploying user or service account must possess the following roles on the target project (or `roles/owner`):
 
 - `roles/aiplatform.admin` (Vertex AI Custom Training, Endpoints, Model Registry)
 - `roles/storage.admin` (Google Cloud Storage workspace management)
@@ -49,6 +49,9 @@ The deploying user or service account must possess the following roles on the ta
 - `roles/apigee.admin` (Apigee API Gateway proxy routing)
 - `roles/artifactregistry.admin` (Docker image registry management)
 - `roles/iam.serviceAccountUser` (ActAs permissions for service accounts)
+
+> [!NOTE]
+> `deploy.sh` automatically audits your current IAM roles. If any required roles are missing, it checks whether your account has administrative authority (`roles/resourcemanager.projectIamAdmin` or `roles/owner`) to self-grant them, prompts for your confirmation, and adds the bindings. If your account lacks permission to grant roles, `deploy.sh` outputs a formatted message with exact justification details and ready-to-run `gcloud` commands to send to your GCP Project Administrator.
 
 ---
 
@@ -61,13 +64,18 @@ To run the full end-to-end deployment against GCP:
 
 ```bash
 ./deploy.sh
+
+# Or with automatic confirmation of prompts:
+./deploy.sh --yes
 ```
 
 ### 2.2. What `deploy.sh` Performs
-1. **Pre-flight Checks**:
+1. **Pre-flight Checks & IAM Verification**:
    - Confirms local dependencies: `gcloud`, `terraform`, `docker`, `python3`, `node`, `npm`.
-   - Validates authenticated identity and billing status.
-   - Verifies user permissions for all required IAM roles.
+   - Validates authenticated identity and active billing account.
+   - Evaluates project IAM policy for missing roles.
+   - If missing roles are found and you have authority (`roles/resourcemanager.projectIamAdmin` / `roles/owner`), prompts for confirmation and self-grants them.
+   - If missing roles cannot be self-granted, halts and generates a detailed copy-pasteable request to send to your GCP Administrator.
 2. **Google Cloud APIs Enablement**:
    Enables all required APIs:
    - `aiplatform.googleapis.com`

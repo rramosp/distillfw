@@ -358,7 +358,7 @@ deployment:
 The platform is deployed to GCP via Terraform modules under `terraform/` orchestrated by `deploy.sh`.
 
 ### 7.1. Pre-flight Checks (`deploy.sh`)
-- Confirms local dependencies: `gcloud`, `terraform`, `docker`.
+- Confirms local dependencies: `gcloud`, `terraform`, `docker`, `python3`, `node`, `npm`.
 - Verifies current GCP authenticated identity and active billing account.
 - Verifies user permissions:
   - `roles/aiplatform.admin`
@@ -367,6 +367,11 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
   - `roles/apigee.admin`
   - `roles/artifactregistry.admin`
   - `roles/iam.serviceAccountUser`
+- **IAM Permission Verification & Remediation Flow**:
+  - Automatically inspects the project IAM policy for the authenticated user (`user:${AUTH_ACCOUNT}` or `roles/owner`).
+  - If any required roles are missing, checks whether the user has permission to grant themselves the required roles (`roles/resourcemanager.projectIamAdmin` or `roles/owner`).
+  - If the user has permission to grant roles, prompts for confirmation (with `-y`/`--yes` auto-confirm option) and automatically adds the missing role bindings.
+  - If the user cannot grant roles, prompts the user to contact their GCP Project Administrator and drafts a suggested message with detailed role justifications and copy-pasteable `gcloud` commands.
 - Enables required Google Cloud APIs:
   ```bash
   gcloud services enable \

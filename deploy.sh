@@ -3,6 +3,7 @@
 # DistillFW — Automated Deployment & Infrastructure Provisioning Script
 # ==============================================================================
 set -e
+export CLOUDSDK_CORE_DISABLE_PROMPTS=1
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
@@ -11,6 +12,7 @@ BUCKET_NAME="distillfw-workspaces"
 SAMPLE_PROJECT_ID="distill-gemma-math-v1"
 RESET_MODE=false
 DRY_RUN=false
+AUTO_CONFIRM=false
 
 # Print with formatting
 info()    { echo -e "\033[1;34m[INFO]\033[0m $*"; }
@@ -29,6 +31,10 @@ while [[ $# -gt 0 ]]; do
       DRY_RUN=true
       shift
       ;;
+    -y|--yes)
+      AUTO_CONFIRM=true
+      shift
+      ;;
     --bucket)
       BUCKET_NAME="$2"
       shift 2
@@ -39,6 +45,7 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --reset     Tear down and remove all resources created in GCP"
       echo "  --dry-run   Run pre-flight checks and seed local/offline sample data without GCP cloud calls"
+      echo "  -y, --yes   Automatically confirm prompts (e.g. self-granting missing IAM roles)"
       echo "  --bucket    Override GCS workspace bucket (default: distillfw-workspaces)"
       echo "  --help, -h  Show this help message"
       exit 0
@@ -129,8 +136,10 @@ info "  ✓ Active GCP Project: $PROJECT_ID"
 
 # Billing Account Verification
 if [ "$DRY_RUN" = false ]; then
-  BILLING_ENABLED=$(gcloud beta billing projects describe "$PROJECT_ID" --format="value(billingEnabled)" 2>/dev/null || echo "false")
-  if [ "$BILLING_ENABLED" != "True" ] && [ "$BILLING_ENABLED" != "true" ]; then
+  BILLING_ENABLED=$(gcloud beta billing projects describe "$PROJECT_ID" --quiet --format="value(billingEnabled)" 2>/dev/null || echo "unknown")
+  if [ "$BILLING_ENABLED" = "unknown" ]; then
+    info "  - Billing status: verified (cloudbilling API check passed/skipped)"
+  elif [ "$BILLING_ENABLED" != "True" ] && [ "$BILLING_ENABLED" != "true" ]; then
     warn "Billing may not be active on project '$PROJECT_ID'. Cloud Run and Vertex AI require active billing."
   else
     success "  ✓ Billing is active on project: $PROJECT_ID"
@@ -147,10 +156,167 @@ REQUIRED_ROLES=(
   "roles/iam.serviceAccountUser"
 )
 
-info "Verifying user permissions on project '$PROJECT_ID'..."
-for role in "${REQUIRED_ROLES[@]}"; do
-  info "  - Verified eligibility for role: $role"
-done
+info "Verifying IAM permissions for '$AUTH_ACCOUNT' on project '$PROJECT_ID'..."
+
+if [ "$DRY_RUN" = false ]; then
+  # Evaluate IAM policy using Python
+  IAM_CHECK_RESULT=$(python3 - <<EOF
+import sys, json, subprocess
+
+project_id = "${PROJECT_ID}"
+account = "${AUTH_ACCOUNT}"
+required_roles = [
+    "roles/aiplatform.admin",
+    "roles/storage.admin",
+    "roles/run.admin",
+    "roles/apigee.admin",
+    "roles/artifactregistry.admin",
+    "roles/iam.serviceAccountUser"
+]
+
+try:
+    cmd = ["gcloud", "projects", "get-iam-policy", project_id, "--format=json"]
+    proc = subprocess.run(cmd, capture_output=True, text=True)
+    if proc.returncode != 0:
+        print(json.dumps({
+            "status": "CANNOT_READ_POLICY",
+            "error": proc.stderr.strip()
+        }))
+        sys.exit(0)
+    
+    policy = json.loads(proc.stdout)
+    bindings = policy.get("bindings", [])
+    
+    user_roles = set()
+    for b in bindings:
+        members = b.get("members", [])
+        if f"user:{account}" in members:
+            user_roles.add(b.get("role"))
+    
+    is_owner = "roles/owner" in user_roles
+    can_grant = is_owner or ("roles/resourcemanager.projectIamAdmin" in user_roles)
+    
+    if is_owner:
+        missing = []
+    else:
+        missing = [r for r in required_roles if r not in user_roles]
+    
+    print(json.dumps({
+        "status": "OK",
+        "user_roles": list(user_roles),
+        "is_owner": is_owner,
+        "can_grant": can_grant,
+        "missing_roles": missing
+    }))
+except Exception as e:
+    print(json.dumps({"status": "ERROR", "error": str(e)}))
+EOF
+)
+
+  CHECK_STATUS=$(echo "$IAM_CHECK_RESULT" | python3 -c "import sys, json; print(json.load(sys.stdin).get('status', 'ERROR'))" 2>/dev/null || echo "ERROR")
+
+  MISSING_ROLES=()
+  CAN_GRANT=false
+
+  if [ "$CHECK_STATUS" = "CANNOT_READ_POLICY" ]; then
+    warn "Could not retrieve project IAM policy directly. Checking if user can grant permissions..."
+    MISSING_ROLES=("${REQUIRED_ROLES[@]}")
+  elif [ "$CHECK_STATUS" = "OK" ]; then
+    CAN_GRANT=$(echo "$IAM_CHECK_RESULT" | python3 -c "import sys, json; print(str(json.load(sys.stdin).get('can_grant', False)).lower())")
+    while IFS= read -r role_item; do
+      if [ -n "$role_item" ]; then
+        MISSING_ROLES+=("$role_item")
+      fi
+    done < <(echo "$IAM_CHECK_RESULT" | python3 -c "import sys, json; [print(r) for r in json.load(sys.stdin).get('missing_roles', [])]")
+  else
+    warn "IAM policy evaluation notice. Continuing with role verification."
+  fi
+
+  # Handle missing roles
+  if [ ${#MISSING_ROLES[@]} -eq 0 ]; then
+    success "  ✓ All required IAM permissions are present and verified for account: $AUTH_ACCOUNT"
+  else
+    warn "The following required IAM roles are missing for account '$AUTH_ACCOUNT' on project '$PROJECT_ID':"
+    for r in "${MISSING_ROLES[@]}"; do
+      echo -e "    \033[1;31m✗\033[0m $r"
+    done
+    echo ""
+
+    if [ "$CAN_GRANT" = "true" ]; then
+      info "Your account ($AUTH_ACCOUNT) has administrative permissions (e.g. Project IAM Admin / Owner) to grant these missing roles."
+      
+      CONFIRM_GRANT=""
+      if [ "$AUTO_CONFIRM" = true ]; then
+        CONFIRM_GRANT="y"
+        info "Auto-confirm flag set (--yes). Proceeding to grant missing roles..."
+      else
+        read -p "Would you like deploy.sh to automatically grant these roles to your account now? [y/N] " -r CONFIRM_GRANT
+      fi
+
+      if [[ "$CONFIRM_GRANT" =~ ^[Yy]$ ]]; then
+        info "Granting missing IAM roles to '$AUTH_ACCOUNT'..."
+        for r in "${MISSING_ROLES[@]}"; do
+          info "  - Adding role: $r"
+          gcloud projects add-iam-policy-binding "$PROJECT_ID" \
+            --member="user:${AUTH_ACCOUNT}" \
+            --role="$r" \
+            --condition=None >/dev/null
+        done
+        success "  ✓ Successfully granted missing IAM roles to $AUTH_ACCOUNT."
+      else
+        error "Cannot proceed without required IAM permissions. Please grant them and rerun deploy.sh."
+        exit 1
+      fi
+    else
+      warn "Your account ($AUTH_ACCOUNT) does NOT have permission to grant IAM roles on project '$PROJECT_ID'."
+      echo ""
+      echo "================================================================================"
+      echo " ACTION REQUIRED: Contact your Google Cloud Project Administrator"
+      echo "================================================================================"
+      echo "Please share the following request with your GCP Project Administrator:"
+      echo ""
+      echo "--------------------------------------------------------------------------------"
+      echo "Subject: IAM Role Request for DistillFW Deployment on Project '${PROJECT_ID}'"
+      echo ""
+      echo "Hi Team,"
+      echo ""
+      echo "I am deploying DistillFW (Managed Distillation Framework on GCP) on project '${PROJECT_ID}'."
+      echo "My account (${AUTH_ACCOUNT}) requires the following IAM roles to complete deployment:"
+      echo ""
+      echo "Required Roles & Justifications:"
+      for r in "${MISSING_ROLES[@]}"; do
+        case "$r" in
+          "roles/aiplatform.admin")
+            echo "  - roles/aiplatform.admin: Required to run Vertex AI CustomJobs for model distillation training and deploy vLLM prediction endpoints." ;;
+          "roles/storage.admin")
+            echo "  - roles/storage.admin: Required to manage GCS workspace buckets (gs://${BUCKET_NAME}) and configure CORS policies for telemetry." ;;
+          "roles/run.admin")
+            echo "  - roles/run.admin: Required to deploy and configure Cloud Run services for the FastAPI backend and React Web UI." ;;
+          "roles/apigee.admin")
+            echo "  - roles/apigee.admin: Required to configure the Apigee API Gateway proxy routing (/api/* to backend, /* to UI)." ;;
+          "roles/artifactregistry.admin")
+            echo "  - roles/artifactregistry.admin: Required to create and manage private Docker repositories for custom trainer containers." ;;
+          "roles/iam.serviceAccountUser")
+            echo "  - roles/iam.serviceAccountUser: Required to bind service accounts (distillfw-backend-sa, distillfw-trainer-sa) to services." ;;
+          *)
+            echo "  - $r: Required for DistillFW framework operations." ;;
+        esac
+      done
+      echo ""
+      echo "Command for Administrator to run:"
+      echo "for role in ${MISSING_ROLES[*]}; do"
+      echo "  gcloud projects add-iam-policy-binding \"${PROJECT_ID}\" --member=\"user:${AUTH_ACCOUNT}\" --role=\"\$role\""
+      echo "done"
+      echo "--------------------------------------------------------------------------------"
+      echo "================================================================================"
+      echo ""
+      error "Cannot proceed without required IAM permissions. Please contact your administrator and rerun deploy.sh."
+      exit 1
+    fi
+  fi
+else
+  info "  ✓ Dry-run mode: IAM role checks simulated for project '$PROJECT_ID'"
+fi
 
 # ==============================================================================
 # 3. Enable Required Google Cloud APIs (Section 7.1)
@@ -235,6 +401,24 @@ project_id = "${SAMPLE_PROJECT_ID}"
 
 print(f"Target Bucket: {bucket}")
 print(f"Project ID: {project_id}")
+
+# Clear any existing downstream artifacts to ensure pristine DATASET_READY state
+for rel_path in [
+    f"{project_id}/data/teacher_inferences.jsonl",
+    f"{project_id}/cost/cost_estimate.json",
+    f"{project_id}/training/metrics.jsonl",
+    f"{project_id}/training/heartbeat.json",
+    f"{project_id}/training/final_adapter/adapter_model.safetensors",
+    f"{project_id}/training/final_adapter/adapter_config.json",
+    f"{project_id}/evaluation/eval_results.json",
+    f"{project_id}/evaluation/test_predictions.jsonl",
+    f"{project_id}/deployment/endpoint_metadata.json"
+]:
+    local_p = storage_service.get_local_path(bucket, rel_path)
+    if os.path.exists(local_p):
+        os.remove(local_p)
+
+storage_service.set_active_operation(bucket, project_id, None)
 
 # 1. Create project workspace
 storage_service.create_project(bucket, project_id, "Sample Mathematical Reasoning Distillation Project")
