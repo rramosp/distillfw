@@ -1,8 +1,9 @@
 resource "google_cloud_run_v2_service" "backend" {
-  name     = "distillfw-backend"
-  location = var.region
-  project  = var.project_id
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  name                = "distillfw-backend"
+  location            = var.region
+  project             = var.project_id
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = var.deletion_protection
 
   template {
     service_account = var.backend_sa_email
@@ -34,10 +35,11 @@ resource "google_cloud_run_v2_service" "backend" {
 }
 
 resource "google_cloud_run_v2_service" "frontend" {
-  name     = "distillfw-frontend"
-  location = var.region
-  project  = var.project_id
-  ingress  = "INGRESS_TRAFFIC_ALL"
+  name                = "distillfw-frontend"
+  location            = var.region
+  project             = var.project_id
+  ingress             = "INGRESS_TRAFFIC_ALL"
+  deletion_protection = var.deletion_protection
 
   template {
     containers {

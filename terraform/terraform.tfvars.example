@@ -4,3 +4,5 @@ workspaces_bucket_name = "distillfw-workspaces"
 backend_image_uri      = ""
 frontend_image_uri     = ""
 trainer_image_uri      = ""
+deletion_protection    = false
+

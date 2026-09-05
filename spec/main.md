@@ -392,7 +392,7 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
   - Passes `backend_image_uri` and `frontend_image_uri` into `terraform.tfvars`, ensuring Cloud Run services deploy the active DistillFW application rather than placeholder images.
 - **`modules/storage`**: Creates GCS bucket with uniform bucket-level access and CORS policies for direct UI log streaming.
 - **`modules/artifact_registry`**: Sets up private Docker registry for training and API images.
-- **`modules/cloud_run`**: Deploys FastAPI backend service and Web UI frontend running the built DistillFW container image. Complies with domain-restricted enterprise organization policies (`constraints/iam.allowedPolicyMemberDomains`) by making public unauthenticated access (`allUsers`) configurable via `allow_public_access` (default `false`) and granting `roles/run.invoker` to the deploying identity (`deployer_member`).
+- **`modules/cloud_run`**: Deploys FastAPI backend service and Web UI frontend running the built DistillFW container image. Explicitly configures `deletion_protection = false` by default (configurable via `deletion_protection`) on Cloud Run services (`distillfw-backend`, `distillfw-frontend`), ensuring automated teardown workflows and CI/CD pipelines can destroy and replace services without Terraform deletion blocks. Complies with domain-restricted enterprise organization policies (`constraints/iam.allowedPolicyMemberDomains`) by making public unauthenticated access (`allUsers`) configurable via `allow_public_access` (default `false`) and granting `roles/run.invoker` to the deploying identity (`deployer_member`).
 - **`modules/apigee`**: Configures Apigee environment, API proxies, route targets, and authentication policies.
 - **`modules/iam`**: Configures fine-grained service accounts for Cloud Run, Vertex AI Custom Training, and Apigee.
 - **Full Infrastructure Provisioning (Zero Targeting Warnings)**:
@@ -406,7 +406,7 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
 - **Reset Mode (`--reset`)**:
   - Must provide a `--reset` option (with optional `-y`/`--yes` auto-confirmation) that completely and permanently tears down and purges ALL resources created in Google Cloud and locally by DistillFW.
   - Reset executes an exhaustive 7-step teardown procedure:
-    1. **Terraform Destroy**: Executes `terraform destroy -auto-approve` across all state-tracked resources.
+    1. **Terraform Destroy**: Configures `deletion_protection = false` in `terraform.tfvars` and automatically normalizes any existing Terraform state instances for Cloud Run services (`deletion_protection: false`), then executes `terraform destroy -auto-approve` across all state-tracked resources. This prevents Terraform from failing with `Error: cannot destroy service without setting deletion_protection=false and running terraform apply`.
     2. **Cloud Run Deletion**: Explicitly queries and deletes all DistillFW Cloud Run services (`distillfw-backend`, `distillfw-frontend`, and any service matching `distillfw*`).
     3. **Artifact Registry Deletion**: Explicitly queries and deletes all DistillFW Artifact Registry repositories (`distillfw-docker-repo`, `distillfw-repo`, and any repository matching `distillfw*`).
     4. **Vertex AI Cleanup**: Explicitly undeploys and deletes all Vertex AI Prediction Endpoints and Model Registry models associated with DistillFW (`distillfw*`).

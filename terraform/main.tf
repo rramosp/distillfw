@@ -35,6 +35,7 @@ module "cloud_run" {
   frontend_image_uri     = var.frontend_image_uri
   allow_public_access    = var.allow_public_access
   deployer_member        = var.deployer_member
+  deletion_protection    = var.deletion_protection
 }
 
 # 5. Apigee API Gateway Module

@@ -89,7 +89,32 @@ if [ "$RESET_MODE" = true ]; then
 project_id             = "${PROJECT_ID}"
 region                 = "${REGION}"
 workspaces_bucket_name = "${BUCKET_NAME}"
+deletion_protection    = false
 EOF
+      # Ensure any pre-existing Cloud Run state instances do not block destruction
+      # with 'cannot destroy service without setting deletion_protection=false'
+      python3 - <<'PYEOF'
+import json, glob
+
+for tfstate_file in glob.glob("terraform.tfstate*"):
+    try:
+        with open(tfstate_file, "r") as f:
+            data = json.load(f)
+        modified = False
+        for res in data.get("resources", []):
+            if "cloud_run" in res.get("type", ""):
+                for inst in res.get("instances", []):
+                    attrs = inst.get("attributes", {})
+                    if attrs.get("deletion_protection") is not False:
+                        attrs["deletion_protection"] = False
+                        modified = True
+        if modified:
+            with open(tfstate_file, "w") as f:
+                json.dump(data, f, indent=2)
+            print(f"Disabled deletion_protection in {tfstate_file}")
+    except Exception:
+        pass
+PYEOF
       terraform init -input=false || true
       terraform destroy -auto-approve -input=false || warn "Terraform destroy completed with notices. Continuing with explicit gcloud resource sweep."
     fi
@@ -534,6 +559,7 @@ deployer_member        = "user:${AUTH_ACCOUNT}"
 allow_public_access    = false
 backend_image_uri      = "${BACKEND_IMAGE_URI}"
 frontend_image_uri     = "${FRONTEND_IMAGE_URI}"
+deletion_protection    = false
 EOF
 
 if [ "$DRY_RUN" = false ]; then

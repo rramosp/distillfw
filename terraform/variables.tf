@@ -44,3 +44,10 @@ variable "deployer_member" {
   type        = string
   default     = ""
 }
+
+variable "deletion_protection" {
+  description = "Whether to enable deletion protection on Cloud Run services"
+  type        = bool
+  default     = false
+}
+

@@ -168,7 +168,7 @@ To remove and completely tear down all GCP cloud resources and local artifacts c
 ```
 
 `--reset` executes an exhaustive 7-step cleanup process:
-1. **Terraform Destroy**: Destroys all state-tracked resources via `terraform destroy -auto-approve`.
+1. **Terraform Destroy**: Destroys all state-tracked resources via `terraform destroy -auto-approve`. `deploy.sh` automatically configures `deletion_protection = false` in `terraform.tfvars` and normalizes state instances for Cloud Run services, preventing errors such as `cannot destroy service without setting deletion_protection=false and running terraform apply`.
 2. **Cloud Run Services**: Discovers and deletes all DistillFW Cloud Run services (`distillfw-backend`, `distillfw-frontend`, and any service matching `distillfw*`).
 3. **Artifact Registry**: Deletes all DistillFW container repositories (`distillfw-docker-repo`, `distillfw-repo`).
 4. **Vertex AI Prediction Endpoints & Models**: Undeploys and deletes all Vertex AI endpoints and custom models created by DistillFW.
@@ -201,6 +201,7 @@ workspaces_bucket_name = "distillfw-workspaces"
 backend_image_uri      = "us-central1-docker.pkg.dev/your-gcp-project-id/distillfw-docker-repo/distillfw-backend:latest"
 frontend_image_uri     = "us-central1-docker.pkg.dev/your-gcp-project-id/distillfw-docker-repo/distillfw-frontend:latest"
 trainer_image_uri      = "us-central1-docker.pkg.dev/your-gcp-project-id/distillfw-docker-repo/distillfw-trainer:latest"
+deletion_protection    = false
 ```
 
 ### 3.2. Initialize & Apply Terraform
@@ -214,7 +215,7 @@ terraform apply tfplan
 - **[`modules/storage`](file:///usr/local/google/home/raulramos/projects/distillfw/terraform/modules/storage/)**: Creates `distillfw-workspaces` with uniform bucket-level access and CORS rules allowing direct browser streaming of logs and metrics.
 - **[`modules/artifact_registry`](file:///usr/local/google/home/raulramos/projects/distillfw/terraform/modules/artifact_registry/)**: Sets up Docker repository `distillfw-docker-repo` for container images.
 - **[`modules/iam`](file:///usr/local/google/home/raulramos/projects/distillfw/terraform/modules/iam/)**: Creates `distillfw-backend-sa` (`roles/aiplatform.user`, `roles/storage.admin`, `roles/iam.serviceAccountUser`) and `distillfw-trainer-sa` (`roles/storage.objectAdmin`, `roles/artifactregistry.reader`).
-- **[`modules/cloud_run`](file:///usr/local/google/home/raulramos/projects/distillfw/terraform/modules/cloud_run/)**: Provisions Cloud Run v2 services for the backend and Web UI.
+- **[`modules/cloud_run`](file:///usr/local/google/home/raulramos/projects/distillfw/terraform/modules/cloud_run/)**: Provisions Cloud Run v2 services for the backend and Web UI with `deletion_protection = false` by default for seamless teardown.
 - **[`modules/apigee`](file:///usr/local/google/home/raulramos/projects/distillfw/terraform/modules/apigee/)**: Maps `/api/*` to Cloud Run backend and `/*` to Web UI with token/key validation and quota policies.
 
 ---
