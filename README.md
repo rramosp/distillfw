@@ -112,3 +112,11 @@ python3 -m pytest tests/
 ./deploy.sh --reset
 ```
 Destroys all created GCP Terraform resources and cleans up workspace artifacts.
+
+---
+
+## Documentation
+
+- **[Installation Guide](docs/install.md)**: Detailed GCP setup, required IAM roles, APIs, Terraform provisioning, Docker images, and local development.
+- **[User Guide](docs/userguide.md)**: Step-by-step example workflow for distilling Gemini 2.5 Pro reasoning into Gemma 2 9B, covering all 7 stages from both the Web UI and REST API.
+

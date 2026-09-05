@@ -244,7 +244,7 @@ gs://<bucket>/<project-id>/
 │   └── eval_results.json           # Lexical scores, Gemini judge rubric, latency stats
 ├── examples/
 │   ├── sample_config.jsonl         # An example config file
-    └── sample_dataset.jsonl         # An example dataset
+|   └── sample_dataset.jsonl         # An example dataset
 └── deployment/
     └── endpoint_metadata.json      # Vertex AI Endpoint URI, deployed model ID
 ```
@@ -401,3 +401,10 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
 - the user can always select from the list of folders within the main bucket as its workspace
 - there must be a collapsible panel on the bottom where we can always see the log of current operations being performed (making inference, training, etc.)
 - the section to manage the current configuration (`config.yaml`) must be a form with controls for all the configuration parameters, and not a plain text area where the user can edit the yaml file. if the user modifies any value, it must update the file. if the file is not present, it must create it. there must be a button to save the configuration to a file.
+
+## 10. Documentation
+
+The platform includes detailed documentation under `docs/`:
+- **`docs/install.md`**: Detailed installation instructions in GCP, covering prerequisites, required IAM roles and APIs, automated deployment via `deploy.sh` (including `--dry-run` and `--reset`), manual Terraform provisioning, Docker image builds, and local verification.
+- **`docs/userguide.md`**: Complete end-to-end example workflow showing how to use the application across all 7 stages from both the interactive Web UI and the programmatic REST API.
+
