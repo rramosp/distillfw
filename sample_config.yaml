@@ -1,0 +1,75 @@
+project:
+  id: "distill-gemma-math-v1"
+  description: "Distill Gemini 2.5 Pro reasoning into Gemma 2 9B for mathematical problem solving"
+  gcs_workspace: "gs://distillfw-workspaces/distill-gemma-math-v1"
+
+models:
+  teacher:
+    model_name: "gemini-2.5-pro"
+    temperature: 0.2
+    max_output_tokens: 4096
+    include_thinking: true
+    response_logprobs: false
+  student:
+    model_name_or_path: "google/gemma-2-9b"
+    quantization: "4bit"  # "none", "8bit", "4bit" (QLoRA)
+    trust_remote_code: false
+
+prompt:
+  instructions: "You are an expert mathematician. Solve this problem stating the final answer."
+  template: "{instructions}\n\nProblem:\n{prompt}\n\nSolution:"
+
+dataset:
+  input_path: "data/input_dataset.jsonl"
+  auto_split: true
+  split_ratios:
+    train: 0.8
+    val: 0.1
+    test: 0.1
+  random_seed: 42
+
+distillation:
+  method: "cot_distillation"  # "seq_kd", "cot_distillation", "on_policy_gkd", "topk_kd"
+  loss_type: "cot_weighted"   # "ce", "cot_weighted", "kl_divergence", "dpo"
+  cot_weights:
+    thinking_weight: 0.5
+    response_weight: 1.0
+  peft:
+    r: 16
+    lora_alpha: 32
+    lora_dropout: 0.05
+    target_modules: ["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"]
+
+training:
+  hardware:
+    accelerator_type: "NVIDIA_L4"  # "NVIDIA_L4", "NVIDIA_A100_80GB", "NVIDIA_H100_80GB"
+    accelerator_count: 1
+    machine_type: "g2-standard-8"
+  hyperparameters:
+    learning_rate: 2.0e-4
+    batch_size: 4
+    gradient_accumulation_steps: 4
+    num_train_epochs: 3
+    warmup_ratio: 0.05
+    optimizer: "paged_adamw_8bit"
+    lr_scheduler_type: "cosine"
+    max_seq_length: 2048
+    logging_steps: 5
+    eval_steps: 50
+    save_steps: 100
+
+evaluation:
+  batch_size: 8
+  metrics: ["rouge", "bleu", "exact_match", "gemini_judge", "latency"]
+  gemini_judge:
+    model_name: "gemini-2.5-flash"
+    rubric: ["correctness", "instruction_following", "coherence", "similarity"]
+
+deployment:
+  serving_framework: "vllm"
+  machine_type: "g2-standard-4"
+  accelerator_type: "NVIDIA_L4"
+  accelerator_count: 1
+  min_replicas: 0
+  max_replicas: 2
+  merge_lora_weights: true

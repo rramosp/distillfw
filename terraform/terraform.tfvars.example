@@ -1,0 +1,6 @@
+project_id             = "your-gcp-project-id"
+region                 = "us-central1"
+workspaces_bucket_name = "distillfw-workspaces"
+backend_image_uri      = ""
+frontend_image_uri     = ""
+trainer_image_uri      = ""
