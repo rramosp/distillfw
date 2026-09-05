@@ -184,6 +184,20 @@ class StorageService:
                 existing = ""
         self.write_file(bucket_name, relative_path, existing + content)
 
+    def delete_file(self, bucket_name: str, relative_path: str) -> None:
+        if self.use_gcs and self._gcs_client:
+            try:
+                bucket = self._gcs_client.bucket(bucket_name)
+                blob = bucket.blob(relative_path)
+                if blob.exists():
+                    blob.delete()
+            except Exception as e:
+                operations_logger.log(f"GCS delete error on '{relative_path}': {e}", level="WARNING", source="STORAGE")
+
+        local_file = self.get_local_path(bucket_name, relative_path)
+        if os.path.exists(local_file):
+            os.remove(local_file)
+
     # ---------------- History Tracking ----------------
 
     def get_history(self, bucket_name: str, project_id: str) -> List[Dict[str, Any]]:

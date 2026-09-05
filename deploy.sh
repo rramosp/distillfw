@@ -482,9 +482,49 @@ cd "$SCRIPT_DIR"
 success "Frontend built into frontend/dist/"
 
 # ==============================================================================
-# 5. Terraform Provisioning (Section 7.2)
+# 5. Build and Push Container Images to Artifact Registry
 # ==============================================================================
-info "=== Step 4: Terraform Infrastructure Provisioning ==="
+BACKEND_IMAGE_URI="us-central1-docker.pkg.dev/${PROJECT_ID}/distillfw-docker-repo/distillfw-backend:latest"
+FRONTEND_IMAGE_URI="us-central1-docker.pkg.dev/${PROJECT_ID}/distillfw-docker-repo/distillfw-frontend:latest"
+
+if [ "$DRY_RUN" = false ]; then
+  info "=== Step 4: Building & Pushing Container Images to Artifact Registry ==="
+
+  # Ensure Artifact Registry repository exists before pushing
+  if ! gcloud artifacts repositories describe "distillfw-docker-repo" --project="$PROJECT_ID" --location="us-central1" &>/dev/null; then
+    info "Creating Artifact Registry repository 'distillfw-docker-repo'..."
+    gcloud artifacts repositories create "distillfw-docker-repo" \
+      --project="$PROJECT_ID" \
+      --location="us-central1" \
+      --repository-format=docker \
+      --description="Docker repository for DistillFW training and API images" --quiet || true
+  fi
+
+  # Configure Docker credentials
+  gcloud auth configure-docker us-central1-docker.pkg.dev --quiet || true
+
+  # Build application container image (integrates React Web UI and FastAPI backend)
+  info "Building DistillFW application container image..."
+  if command -v docker &>/dev/null && docker info &>/dev/null; then
+    docker build -t "$BACKEND_IMAGE_URI" -t "$FRONTEND_IMAGE_URI" -f backend/Dockerfile .
+    info "Pushing container images to Artifact Registry..."
+    docker push "$BACKEND_IMAGE_URI"
+    docker push "$FRONTEND_IMAGE_URI"
+    success "Container images pushed to Artifact Registry: $BACKEND_IMAGE_URI"
+  else
+    info "Docker daemon not running locally. Submitting build via Google Cloud Build..."
+    gcloud builds submit --tag "$BACKEND_IMAGE_URI" -f backend/Dockerfile . --project="$PROJECT_ID" --quiet
+    gcloud artifacts docker tags add "$BACKEND_IMAGE_URI" "$FRONTEND_IMAGE_URI" --quiet || true
+    success "Container images built and pushed via Cloud Build: $BACKEND_IMAGE_URI"
+  fi
+else
+  info "=== Step 4: Skipping container build & push (Dry-Run Mode) ==="
+fi
+
+# ==============================================================================
+# 6. Terraform Provisioning (Section 7.2)
+# ==============================================================================
+info "=== Step 5: Terraform Infrastructure Provisioning ==="
 cd terraform
 cat <<EOF > terraform.tfvars
 project_id             = "${PROJECT_ID}"
@@ -492,6 +532,8 @@ region                 = "us-central1"
 workspaces_bucket_name = "${BUCKET_NAME}"
 deployer_member        = "user:${AUTH_ACCOUNT}"
 allow_public_access    = false
+backend_image_uri      = "${BACKEND_IMAGE_URI}"
+frontend_image_uri     = "${FRONTEND_IMAGE_URI}"
 EOF
 
 if [ "$DRY_RUN" = false ]; then
@@ -537,6 +579,12 @@ if [ "$DRY_RUN" = false ]; then
 
   success "  ✓ All Google Cloud infrastructure modules provisioned in full with zero targeting warnings."
 
+  # Ensure Cloud Run services run the newly built container image
+  info "Verifying Cloud Run service revisions with built container image..."
+  gcloud run deploy distillfw-backend --image="$BACKEND_IMAGE_URI" --region="us-central1" --project="$PROJECT_ID" --quiet || true
+  gcloud run deploy distillfw-frontend --image="$FRONTEND_IMAGE_URI" --region="us-central1" --project="$PROJECT_ID" --quiet || true
+
+
   # Extract outputs via JSON to support all Terraform versions
   eval $(terraform output -json 2>/dev/null | python3 -c '
 import sys, json
@@ -568,9 +616,9 @@ fi
 cd "$SCRIPT_DIR"
 
 # ==============================================================================
-# 6. Initialization and Example Data (Section 8)
+# 7. Initialization and Example Data (Section 8)
 # ==============================================================================
-info "=== Step 5: Initializing Sample Project in '${BUCKET_NAME}' ==="
+info "=== Step 6: Initializing Sample Project in '${BUCKET_NAME}' ==="
 
 # (1) Create bucket distillfw-workspaces
 if [ "$DRY_RUN" = false ]; then
@@ -613,9 +661,7 @@ for rel_path in [
     f"{project_id}/evaluation/test_predictions.jsonl",
     f"{project_id}/deployment/endpoint_metadata.json"
 ]:
-    local_p = storage_service.get_local_path(bucket, rel_path)
-    if os.path.exists(local_p):
-        os.remove(local_p)
+    storage_service.delete_file(bucket, rel_path)
 
 storage_service.set_active_operation(bucket, project_id, None)
 

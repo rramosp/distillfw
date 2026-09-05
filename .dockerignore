@@ -1,0 +1,14 @@
+.git
+.gitignore
+.local_workspace
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache
+node_modules
+frontend/node_modules
+.env
+terraform/.terraform
+terraform/terraform.tfstate*
+terraform/terraform.tfvars

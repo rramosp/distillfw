@@ -1,0 +1,1 @@
+- [x] review userguide, maybe remove the localhost calls, and/or explain well what is the backend it is hitting. (Updated with detailed backend architecture and 3 distinct execution targets in docs/userguide.md)

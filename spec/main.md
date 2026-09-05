@@ -384,10 +384,15 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
     iam.googleapis.com
   ```
 
-### 7.2. Terraform Provisioning
+### 7.2. Container Image Build & Terraform Provisioning
+- **Frontend SPA & Application Container Build**:
+  - `deploy.sh` compiles the React Web UI (`npm run build` into `frontend/dist/`).
+  - Packages the unified application container via `backend/Dockerfile`, embedding the compiled Web UI, FastAPI backend routers, and workspace configurations.
+  - Builds and pushes the image (`us-central1-docker.pkg.dev/${PROJECT_ID}/distillfw-docker-repo/distillfw-backend:latest` and `distillfw-frontend:latest`) to Artifact Registry using Docker (with automated fallback to Cloud Build if local Docker is unavailable).
+  - Passes `backend_image_uri` and `frontend_image_uri` into `terraform.tfvars`, ensuring Cloud Run services deploy the active DistillFW application rather than placeholder images.
 - **`modules/storage`**: Creates GCS bucket with uniform bucket-level access and CORS policies for direct UI log streaming.
 - **`modules/artifact_registry`**: Sets up private Docker registry for training and API images.
-- **`modules/cloud_run`**: Deploys FastAPI backend service and Web UI frontend. Complies with domain-restricted enterprise organization policies (`constraints/iam.allowedPolicyMemberDomains`) by making public unauthenticated access (`allUsers`) configurable via `allow_public_access` (default `false`) and granting `roles/run.invoker` to the deploying identity (`deployer_member`).
+- **`modules/cloud_run`**: Deploys FastAPI backend service and Web UI frontend running the built DistillFW container image. Complies with domain-restricted enterprise organization policies (`constraints/iam.allowedPolicyMemberDomains`) by making public unauthenticated access (`allUsers`) configurable via `allow_public_access` (default `false`) and granting `roles/run.invoker` to the deploying identity (`deployer_member`).
 - **`modules/apigee`**: Configures Apigee environment, API proxies, route targets, and authentication policies.
 - **`modules/iam`**: Configures fine-grained service accounts for Cloud Run, Vertex AI Custom Training, and Apigee.
 - **Full Infrastructure Provisioning (Zero Targeting Warnings)**:

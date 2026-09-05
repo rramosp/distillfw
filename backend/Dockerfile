@@ -10,12 +10,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt /app/requirements.txt
-RUN pip install --no-cache-dir -U pip setuptools wheel
-RUN pip install --no-cache-dir -r requirements.txt
+COPY backend/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -U pip setuptools wheel \
+    && pip install --no-cache-dir -r /app/requirements.txt
 
-COPY . /app/backend
-WORKDIR /app
+COPY backend/ /app/backend/
+COPY frontend/dist/ /app/frontend/dist/
+COPY sample_config.yaml /app/sample_config.yaml
+COPY sample_dataset.jsonl /app/sample_dataset.jsonl
+
+ENV PYTHONPATH=/app
 
 EXPOSE 8080
 

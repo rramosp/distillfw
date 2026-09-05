@@ -61,6 +61,7 @@ app.include_router(logs.router, prefix="/api")
 
 
 @app.get("/healthz")
+@app.get("/api/healthz")
 def health_check():
     return {"status": "HEALTHY", "version": settings.VERSION}
 

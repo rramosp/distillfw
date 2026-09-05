@@ -85,23 +85,32 @@ sequenceDiagram
 
 ---
 
-### API Environments & Authentication Setup
+### API Environments & Backend Architecture Setup
 
-DistillFW provides a unified REST API across all 7 stages. You can execute requests either against your local development environment or directly against the deployed Google Cloud Platform (Cloud Run) backend:
+DistillFW provides a unified REST API across all 7 stages. You can execute requests against three targets depending on your deployment model:
 
-1. **Localhost Environment (`http://localhost:8080`)**:
-   - Running locally (`uvicorn backend.main:app --host 0.0.0.0 --port 8080`), authentication is inherited from your workstation's Google Cloud Application Default Credentials (ADC) without requiring explicit HTTP authorization headers.
+1. **Direct Localhost Execution (`http://localhost:8080`)**:
+   - **Backend Being Hit**: The local Python FastAPI process running directly on your workstation (`uvicorn backend.main:app --host 0.0.0.0 --port 8080`).
+   - **Authentication**: Inherits your workstation's Google Cloud Application Default Credentials (ADC). It connects directly to live GCP resources (such as `gs://distillfw-workspaces` and Vertex AI) using your local `gcloud` login, so no `Authorization:` header is needed in HTTP requests.
    ```bash
    export DISTILL_API="http://localhost:8080"
+   export AUTH_HEADER=""
    ```
 
-2. **Deployed in GCP Environment (Cloud Run Endpoint)**:
-   - When calling the deployed Cloud Run service (`https://distillfw-backend-bxddgrrqlq-uc.a.run.app` or your project's backend URL), Google Cloud organizations enforce IAM-authorized invoker policies (`constraints/iam.allowedPolicyMemberDomains`).
-   - Unauthenticated requests return `403 Forbidden`. You must include an Identity Token in the `Authorization: Bearer <TOKEN>` request header using `gcloud auth print-identity-token`:
+2. **GCP Cloud Run Deployed Endpoint (`https://distillfw-backend-...a.run.app`)**:
+   - **Backend Being Hit**: The containerized DistillFW FastAPI backend service running serverlessly on Google Cloud Run in GCP.
+   - **Authentication**: In enterprise organizations, Google Cloud organization policies (`constraints/iam.allowedPolicyMemberDomains`) mandate IAM authorization for Cloud Run. Direct unauthenticated requests return `403 Forbidden`. You must include an Identity Token in the `Authorization: Bearer <TOKEN>` request header:
    ```bash
    export DISTILL_API="https://distillfw-backend-bxddgrrqlq-uc.a.run.app"
    export AUTH_HEADER="Authorization: Bearer $(gcloud auth print-identity-token)"
    ```
+
+3. **GCP Cloud Run via Local Authenticated Proxy (`http://localhost:8080`)**:
+   - **Backend Being Hit**: The deployed Google Cloud Run service in GCP, tunneled through Google Cloud's secure proxy:
+     ```bash
+     gcloud run services proxy distillfw-backend --region=us-central1 --port=8080
+     ```
+   - **Authentication**: Handled automatically in the background by the `gcloud` proxy tunnel using your active Google identity credentials. You can open **`http://localhost:8080`** directly in any web browser to interact with the GCP-hosted Web UI, or run unauthenticated `curl` commands against `http://localhost:8080` that seamlessly hit the live Cloud Run backend.
 
 > [!TIP]
 > **Unified Parameterized Invocation**:
