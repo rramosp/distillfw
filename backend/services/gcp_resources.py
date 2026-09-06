@@ -168,6 +168,12 @@ class GCPResourcesService:
             endpoint_status = "ACTIVE"
             endpoint_detail = f"Online vLLM endpoint serving {dep_data.get('base_model', student_model)} (avg latency: {avg_lat}ms, {current_reps} replica)"
             endpoint_console = f"https://console.cloud.google.com/vertex-ai/locations/{region}/endpoints/{endpoint_id}?project={gcp_project}"
+        elif dep_data and dep_data.get("status") in ("DEPLOYING", "INITIALIZING"):
+            endpoint_id = dep_data.get("endpoint_id", f"endpoint-{project_id}")
+            endpoint_uri = dep_data.get("endpoint_uri", f"projects/{gcp_project}/locations/{region}/endpoints/{endpoint_id}")
+            endpoint_status = "INITIALIZING"
+            endpoint_detail = f"Endpoint deployment in progress ({dep_data.get('current_step', 'Provisioning container...')}, {dep_data.get('progress_pct', 20)}%)"
+            endpoint_console = f"https://console.cloud.google.com/vertex-ai/online-prediction/endpoints?project={gcp_project}"
         else:
             endpoint_id = f"distillfw-{project_id}-endpoint"
             endpoint_uri = f"projects/{gcp_project}/locations/{region}/endpoints/{endpoint_id}"

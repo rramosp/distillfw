@@ -1,6 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Rocket, Play, RefreshCw, Send, CheckCircle2, AlertCircle, Cpu, Clock, Terminal, Square, RotateCcw, Brain, Zap, Sparkles, ChevronDown, ChevronUp } from 'lucide-react';
+import { 
+  Rocket, Play, RefreshCw, Send, CheckCircle2, AlertCircle, 
+  Cpu, Clock, Terminal, Square, RotateCcw, Brain, Zap, Sparkles, 
+  ChevronDown, ChevronUp, HelpCircle 
+} from 'lucide-react';
 import { deployEndpoint, stopDeployment, clearDeployment, fetchDeploymentStatus, predictEndpoint } from '../api';
+
+const QUICK_PROMPTS = [
+  'What is 25 multiplied by 14?',
+  'Calculate 15 * 18',
+  'What is the capital of France?',
+  'Who wrote Hamlet?',
+  'Explain the difference between LoRA and full fine-tuning',
+  'What is the speed of light?'
+];
 
 export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
   const [metadata, setMetadata] = useState(null);
@@ -29,6 +42,33 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
     if (projectId) loadStatus();
   }, [bucket, projectId]);
 
+  // Poll while deploying
+  useEffect(() => {
+    if (!projectId) return;
+    const isDeploying = deploying || metadata?.status === 'DEPLOYING';
+    if (!isDeploying) return;
+
+    const interval = setInterval(async () => {
+      try {
+        const data = await fetchDeploymentStatus(bucket, projectId);
+        if (data) {
+          setMetadata(data);
+          if (data.status === 'ACTIVE') {
+            setDeploying(false);
+            if (onStatusChange) onStatusChange();
+          } else if (data.status === 'STOPPED') {
+            setDeploying(false);
+            if (onStatusChange) onStatusChange();
+          }
+        }
+      } catch (err) {
+        // ignore polling errors
+      }
+    }, 1500);
+
+    return () => clearInterval(interval);
+  }, [bucket, projectId, deploying, metadata?.status]);
+
   const handleDeploy = async () => {
     setDeploying(true);
     setErrorMsg(null);
@@ -38,7 +78,6 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
       if (onStatusChange) onStatusChange();
     } catch (err) {
       setErrorMsg(`Deployment failed: ${err.message}`);
-    } finally {
       setDeploying(false);
     }
   };
@@ -53,6 +92,7 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
       setErrorMsg(`Failed to stop deployment: ${err.message}`);
     } finally {
       setStopping(false);
+      setDeploying(false);
     }
   };
 
@@ -62,6 +102,7 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
       setMetadata(null);
       setTestOutput(null);
       setErrorMsg(null);
+      setDeploying(false);
       if (onStatusChange) onStatusChange();
     } catch (err) {
       setErrorMsg(`Failed to clear deployment: ${err.message}`);
@@ -69,7 +110,7 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
   };
 
   const handlePredict = async (e) => {
-    e.preventDefault();
+    if (e) e.preventDefault();
     if (!testPrompt.trim()) return;
     setPredicting(true);
     setTestOutput(null);
@@ -83,6 +124,9 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
       setPredicting(false);
     }
   };
+
+  const isDeploying = deploying || metadata?.status === 'DEPLOYING';
+  const isActive = metadata?.status === 'ACTIVE';
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto pb-16">
@@ -99,28 +143,44 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
         </div>
 
         <div className="flex items-center gap-3">
-          {deploying ? (
+          {isDeploying ? (
             <button
               onClick={handleStop}
               disabled={stopping}
-              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-rose-500/20"
+              className="flex items-center gap-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-rose-500/20 cursor-pointer"
             >
               <Square className="w-4 h-4 fill-current" />
               {stopping ? 'Stopping...' : 'Stop Deployment'}
             </button>
-          ) : metadata ? (
+          ) : isActive ? (
             <button
               onClick={handleClear}
-              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-4 py-2.5 rounded-lg border border-slate-600 shadow-md"
+              className="flex items-center gap-2 bg-slate-700 hover:bg-slate-600 text-slate-200 text-xs font-semibold px-4 py-2.5 rounded-lg border border-slate-600 shadow-md cursor-pointer"
             >
               <RotateCcw className="w-4 h-4 text-slate-300" />
               Start Over
             </button>
+          ) : metadata?.status === 'STOPPED' ? (
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleDeploy}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-md cursor-pointer"
+              >
+                <Rocket className="w-4 h-4" />
+                Retry Deploy
+              </button>
+              <button
+                onClick={handleClear}
+                className="flex items-center gap-1.5 bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs px-3 py-2.5 rounded-lg border border-slate-600 cursor-pointer"
+              >
+                Clear
+              </button>
+            </div>
           ) : (
             <button
               onClick={handleDeploy}
-              disabled={deploying}
-              className="flex items-center gap-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-green-500/20 disabled:opacity-50"
+              disabled={isDeploying}
+              className="flex items-center gap-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-green-500/20 disabled:opacity-50 cursor-pointer"
             >
               <Rocket className="w-4 h-4" />
               Deploy to Vertex AI Endpoint
@@ -128,9 +188,9 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
           )}
           <button
             onClick={loadStatus}
-            className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 rounded-lg"
+            className="p-2.5 bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white border border-slate-700 rounded-lg cursor-pointer"
           >
-            <RefreshCw className="w-4 h-4" />
+            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
@@ -142,7 +202,126 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
         </div>
       )}
 
-      {metadata ? (
+      {/* Deployment In Progress Card */}
+      {isDeploying && (
+        <div className="bg-slate-800/80 border border-blue-600/50 rounded-xl p-6 space-y-5 shadow-xl relative overflow-hidden">
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-700/80 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-blue-950/80 border border-blue-700/60 flex items-center justify-center text-blue-400">
+                <Rocket className="w-5 h-5 animate-pulse" />
+              </div>
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-sm font-bold text-white uppercase tracking-wider">Vertex AI Deployment In Progress</span>
+                  <span className="text-[11px] font-mono text-cyan-300 bg-cyan-950/60 border border-cyan-800 px-2 py-0.5 rounded font-bold">
+                    {metadata?.progress_pct || 15}%
+                  </span>
+                </div>
+                <p className="text-xs text-slate-300 mt-0.5">
+                  {metadata?.current_step || 'Provisioning accelerator node and configuring vLLM serving container...'}
+                </p>
+              </div>
+            </div>
+
+            <button
+              onClick={handleStop}
+              disabled={stopping}
+              className="self-start sm:self-center flex items-center gap-2 bg-rose-600/80 hover:bg-rose-600 text-white text-xs font-semibold px-3.5 py-1.5 rounded-lg transition border border-rose-500/60 shadow-sm cursor-pointer"
+            >
+              <Square className="w-3.5 h-3.5 fill-current" />
+              {stopping ? 'Stopping...' : 'Stop Deployment'}
+            </button>
+          </div>
+
+          {/* Progress Bar */}
+          <div className="space-y-1.5">
+            <div className="flex justify-between text-xs text-slate-400 font-mono">
+              <span>Deployment Stages Progress</span>
+              <span className="text-blue-400 font-bold">{metadata?.progress_pct || 15}%</span>
+            </div>
+            <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
+              <div
+                className="h-full bg-gradient-to-r from-blue-600 via-cyan-500 to-emerald-500 transition-all duration-500 rounded-full"
+                style={{ width: `${metadata?.progress_pct || 15}%` }}
+              />
+            </div>
+          </div>
+
+          {/* Stage Milestones */}
+          <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 pt-1">
+            {[
+              { id: 1, name: '1. Endpoint Resource' },
+              { id: 2, name: '2. Model Packaging' },
+              { id: 3, name: '3. vLLM Container' },
+              { id: 4, name: '4. Engine Warmup' },
+              { id: 5, name: '5. Health Probe' },
+            ].map((st, idx) => {
+              const stageData = metadata?.stages?.[idx];
+              const isDone = stageData?.status === 'COMPLETED' || (metadata?.progress_pct || 0) >= ((idx + 1) * 20);
+              const isCurr = stageData?.status === 'IN_PROGRESS' || (!isDone && (metadata?.progress_pct || 0) >= (idx * 20));
+              return (
+                <div
+                  key={st.id}
+                  className={`p-2.5 rounded-lg border text-xs flex flex-col gap-1 transition ${
+                    isDone
+                      ? 'bg-emerald-950/40 border-emerald-700/60 text-emerald-300'
+                      : isCurr
+                      ? 'bg-blue-950/60 border-blue-500/80 text-blue-200 animate-pulse'
+                      : 'bg-slate-900/60 border-slate-800 text-slate-500'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="font-semibold text-[11px] truncate">{st.name}</span>
+                    {isDone ? (
+                      <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
+                    ) : isCurr ? (
+                      <RefreshCw className="w-3 h-3 text-blue-400 animate-spin shrink-0" />
+                    ) : (
+                      <Clock className="w-3 h-3 text-slate-600 shrink-0" />
+                    )}
+                  </div>
+                  <span className="text-[10px] text-slate-400 truncate">
+                    {isDone ? 'Completed' : isCurr ? 'In Progress' : 'Queued'}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800 pt-3">
+            <span className="font-mono">Machine: {metadata?.machine_type || 'g2-standard-4'} + 1x {metadata?.accelerator_type || 'NVIDIA_L4'}</span>
+            <span className="font-mono text-cyan-400">Engine: vLLM PagedAttention</span>
+          </div>
+        </div>
+      )}
+
+      {/* Stopped Deployment Card */}
+      {!isDeploying && metadata?.status === 'STOPPED' && (
+        <div className="bg-amber-950/30 border border-amber-800/80 rounded-xl p-5 text-center space-y-3">
+          <Clock className="w-8 h-8 text-amber-400 mx-auto" />
+          <div className="text-sm font-bold text-white">Endpoint Deployment Stopped</div>
+          <p className="text-xs text-slate-300 max-w-md mx-auto">
+            The previous deployment operation was stopped. You can retry launching the Vertex AI Endpoint deployment or clear state to start over.
+          </p>
+          <div className="flex items-center justify-center gap-3 pt-2">
+            <button
+              onClick={handleDeploy}
+              className="bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-lg cursor-pointer"
+            >
+              Resume Deployment
+            </button>
+            <button
+              onClick={handleClear}
+              className="bg-slate-700 hover:bg-slate-600 text-slate-300 text-xs px-4 py-2 rounded-lg cursor-pointer"
+            >
+              Clear
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Active Endpoint & Playground */}
+      {!isDeploying && isActive && (
         <div className="space-y-6">
           {/* Active Endpoint Info */}
           <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-5 space-y-4">
@@ -201,19 +380,42 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
                     type="text"
                     value={testPrompt}
                     onChange={(e) => setTestPrompt(e.target.value)}
-                    placeholder="Enter test problem..."
+                    placeholder="Enter test problem or query..."
                     disabled={predicting}
                     className="flex-1 bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:border-blue-500 focus:outline-none disabled:opacity-50"
                   />
                   <button
                     type="submit"
                     disabled={predicting}
-                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-50"
+                    className="flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-semibold px-4 py-2 rounded-lg disabled:opacity-50 cursor-pointer"
                   >
                     <Send className="w-3.5 h-3.5" />
                     {predicting ? 'Generating...' : 'Predict'}
                   </button>
                 </div>
+              </div>
+
+              {/* Quick Prompt Selector Chips */}
+              <div className="flex flex-wrap items-center gap-1.5 pt-1">
+                <span className="text-[11px] text-slate-500 mr-1 flex items-center gap-1">
+                  <HelpCircle className="w-3 h-3" /> Sample queries:
+                </span>
+                {QUICK_PROMPTS.map((qp, idx) => (
+                  <button
+                    key={idx}
+                    type="button"
+                    onClick={() => {
+                      setTestPrompt(qp);
+                    }}
+                    className={`text-[11px] px-2.5 py-1 rounded-md border transition cursor-pointer ${
+                      testPrompt === qp
+                        ? 'bg-blue-900/50 border-blue-600 text-cyan-300 font-semibold'
+                        : 'bg-slate-900/80 border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-600'
+                    }`}
+                  >
+                    {qp}
+                  </button>
+                ))}
               </div>
             </form>
 
@@ -255,7 +457,7 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
                       </p>
                     </div>
 
-                    <div className="p-3 bg-slate-950/90 border border-slate-800 rounded-lg text-xs font-mono text-slate-300 leading-relaxed min-h-[110px]">
+                    <div className="p-3 bg-slate-950/90 border border-slate-800 rounded-lg text-xs font-mono text-slate-300 leading-relaxed min-h-[110px] whitespace-pre-wrap">
                       {testOutput.student_before?.completion || testOutput.completion}
                     </div>
                   </div>
@@ -272,8 +474,13 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
                           {testOutput.teacher?.latency_ms || 420} ms
                         </span>
                       </div>
-                      <div className="text-[11px] text-purple-300 font-mono truncate">
-                        {testOutput.teacher?.model || 'gemini-2.5-pro'}
+                      <div className="text-[11px] text-purple-300 font-mono truncate flex items-center justify-between">
+                        <span>{testOutput.teacher?.model || 'gemini-2.5-pro'}</span>
+                        {testOutput.teacher?.is_live_api && (
+                          <span className="text-[9px] bg-purple-900/80 text-purple-200 border border-purple-600 px-1.5 py-0.5 rounded uppercase font-bold">
+                            Live Gemini API
+                          </span>
+                        )}
                       </div>
                       <p className="text-[11px] text-slate-400">
                         {testOutput.teacher?.description || 'Frontier reference model with Chain-of-Thought reasoning steps'}
@@ -286,20 +493,20 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
                           <button
                             type="button"
                             onClick={() => setShowThinking(!showThinking)}
-                            className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300 font-medium mb-1"
+                            className="flex items-center gap-1 text-[10px] text-purple-400 hover:text-purple-300 font-medium mb-1 cursor-pointer"
                           >
                             <Sparkles className="w-3 h-3" />
                             {showThinking ? 'Hide CoT Reasoning' : 'Show CoT Reasoning'}
                             {showThinking ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                           </button>
                           {showThinking && (
-                            <div className="p-2.5 bg-purple-950/60 border border-purple-900/60 rounded text-[10px] font-mono text-purple-200 whitespace-pre-wrap max-h-24 overflow-y-auto">
+                            <div className="p-2.5 bg-purple-950/60 border border-purple-900/60 rounded text-[10px] font-mono text-purple-200 whitespace-pre-wrap max-h-32 overflow-y-auto">
                               {testOutput.teacher.thinking}
                             </div>
                           )}
                         </div>
                       )}
-                      <div className="p-3 bg-slate-950/90 border border-purple-900/40 rounded-lg text-xs font-mono text-purple-100 font-semibold min-h-[50px]">
+                      <div className="p-3 bg-slate-950/90 border border-purple-900/40 rounded-lg text-xs font-mono text-purple-100 font-semibold min-h-[50px] whitespace-pre-wrap">
                         {testOutput.teacher?.completion || testOutput.completion}
                       </div>
                     </div>
@@ -326,11 +533,11 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
                     </div>
 
                     <div className="p-3 bg-slate-950/90 border border-emerald-800/80 rounded-lg text-xs font-mono text-emerald-300 font-bold min-h-[110px] flex items-center">
-                      <div className="space-y-1">
+                      <div className="space-y-1 w-full">
                         <div className="text-[10px] uppercase tracking-wider text-emerald-400 font-semibold flex items-center gap-1">
-                          <CheckCircle2 className="w-3.5 h-3.5" /> High-Accuracy Answer
+                          <CheckCircle2 className="w-3.5 h-3.5" /> High-Accuracy Domain Answer
                         </div>
-                        <div className="text-base text-white">
+                        <div className="text-base text-white whitespace-pre-wrap break-words">
                           {testOutput.student_after?.completion || testOutput.completion}
                         </div>
                       </div>
@@ -341,17 +548,20 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
             )}
           </div>
         </div>
-      ) : (
+      )}
+
+      {/* Uninitialized/Empty State */}
+      {!isDeploying && !isActive && metadata?.status !== 'STOPPED' && (
         <div className="bg-slate-800/40 border border-dashed border-slate-700 rounded-xl p-12 text-center space-y-3">
           <Rocket className="w-10 h-10 text-slate-500 mx-auto" />
           <div className="text-slate-300 font-semibold text-sm">Distilled Model Not Deployed Yet</div>
           <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Click "Deploy to Vertex AI Endpoint" to spin up an online prediction endpoint running the distilled student model.
+            Click "Deploy to Vertex AI Endpoint" to spin up an online prediction endpoint running the distilled student model on vLLM with PagedAttention.
           </p>
           <button
             onClick={handleDeploy}
-            disabled={deploying}
-            className="bg-green-600 hover:bg-green-500 text-white text-xs font-semibold px-4 py-2 rounded-lg"
+            disabled={isDeploying}
+            className="bg-green-600 hover:bg-green-500 text-white text-xs font-semibold px-4 py-2 rounded-lg cursor-pointer"
           >
             Deploy Endpoint
           </button>

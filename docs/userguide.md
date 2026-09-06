@@ -621,31 +621,43 @@ Deploys the distilled model to a Vertex AI Endpoint running vLLM and benchmarks 
 
 #### A. Using the Web UI
 1. Navigate to **7. vLLM Deploy**.
-2. Click **Deploy to Vertex AI Endpoint**. While deploying, action buttons are disabled and a **Stop Deployment** button appears.
-3. Once active, the metadata card displays the active Endpoint URI, serving framework (`vLLM`), base model, and machine type. The header button changes to **Start Over** (which undeploys the endpoint and clears metadata).
-4. Scroll to the **Interactive Model Inference Playground**:
-   - Enter a test query: e.g. `"What is 25 multiplied by 14?"`
+2. Click **Deploy to Vertex AI Endpoint**.
+3. **Deployment in Progress**:
+   - The deployment runs progressively across 5 operational milestones with live progress bar and status pills:
+     - Stage 1: *Endpoint Resource Provisioning* (25%)
+     - Stage 2: *Model Registry Adapter Packaging* (50%)
+     - Stage 3: *vLLM Serving Container Launch on NVIDIA_L4* (75%)
+     - Stage 4: *PagedAttention Engine Warmup* (90%)
+     - Stage 5: *Readiness Health Check & Latency Probe* (100%)
+   - While deploying, the workspace status badge displays an animated **DEPLOYING** indicator with a rocket icon.
+   - You can safely interrupt deployment at any time by clicking **Stop Deployment**.
+4. Once active, the metadata card displays the active Endpoint URI, serving framework (`vLLM`), base model, and machine type. The header button changes to **Start Over** (which undeploys the endpoint and clears metadata).
+5. Scroll to the **Interactive Model Inference Playground**:
+   - Select one of the quick sample query chips (e.g., *"What is 25 multiplied by 14?"*, *"What is the capital of France?"*, *"What does LoRA stand for in machine learning?"*, *"Explain vLLM serving engine"*), or enter your own custom query.
    - Click **Predict**.
    - Review the responsive **3-Column Comparison Grid**:
      1. **1. Student (Before)**: Base pre-trained model answer, higher latency (~120ms), unaligned verbose deduction.
      2. **2. Teacher Model**: Gemini reference answer, expandable Chain-of-Thought reasoning steps, latency (~450ms).
-     3. **3. Student (After)**: Distilled student model running on vLLM, direct concise answer (`350`), and lightning-fast latency (~38ms, ~12x faster than Teacher).
+     3. **3. Student (After)**: Distilled student model running on vLLM, direct concise domain-aligned answer (e.g. `350` for `25 * 14`), and lightning-fast latency (~38ms, ~12x faster than Teacher).
 
 #### B. Using the REST API
 
 ##### Localhost (`http://localhost:8080`):
 
 ```bash
-# 1. Deploy to Vertex AI Endpoint
+# 1. Deploy to Vertex AI Endpoint (asynchronous progression)
 curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/deploy?bucket=distillfw-workspaces" | jq .
+
+# 1b. Deploy synchronously (completes immediately, ideal for automated CI/CD and test suites)
+curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/deploy?bucket=distillfw-workspaces&sync=true" | jq .
 
 # 2. Stop ongoing deployment (if needed)
 curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/stop?bucket=distillfw-workspaces"
 
-# 3. Check endpoint status
+# 3. Check endpoint status (reports progress_pct, current_step, and milestone statuses)
 curl -s "http://localhost:8080/api/deployment/distill-gemma-math-v1/status?bucket=distillfw-workspaces" | jq .
 
-# 4. Send a test prediction query (returns 3-model comparison)
+# 4. Send a test prediction query (returns 3-model comparative breakdown with prompt-specific answers)
 curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/predict?bucket=distillfw-workspaces" \
   -H "Content-Type: application/json" \
   -d '{

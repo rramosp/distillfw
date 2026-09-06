@@ -97,3 +97,18 @@ def test_deployed_status(temp_workspace):
     storage_service.write_file(bucket, f"{project}/deployment/endpoint_metadata.json", '{"status": "ACTIVE"}\n')
     res = storage_service.infer_status(bucket, project)
     assert res["status"] == ProjectStatus.DEPLOYED.value
+
+
+def test_deploying_status(temp_workspace):
+    bucket = "test-bucket"
+    project = "test-proj-deploying"
+    storage_service.write_file(bucket, f"{project}/config.yaml", "project:\n  id: test-proj-deploying\n")
+    storage_service.write_file(bucket, f"{project}/data/split_dataset.jsonl", '{"prompt": "1+1", "split": "train"}\n')
+    storage_service.write_file(bucket, f"{project}/data/teacher_inferences.jsonl", '{"prompt": "1+1", "teacher_response": "2"}\n')
+    storage_service.write_file(bucket, f"{project}/cost/cost_estimate.json", '{"total_experiment_cost_usd": 12.5}\n')
+    storage_service.write_file(bucket, f"{project}/training/final_adapter/adapter_model.safetensors", "BIN_DATA")
+    storage_service.write_file(bucket, f"{project}/evaluation/eval_results.json", '{"metrics": {}}\n')
+    storage_service.write_file(bucket, f"{project}/deployment/endpoint_metadata.json", '{"status": "DEPLOYING", "progress_pct": 40}\n')
+    res = storage_service.infer_status(bucket, project)
+    assert res["status"] == ProjectStatus.DEPLOYING.value
+

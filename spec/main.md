@@ -169,8 +169,22 @@ Executed strictly on the untouched `test` split:
 - **Packaging Options**:
   - *Option A (Default)*: Base open-source model + dynamic PEFT LoRA adapter.
   - *Option B*: Merged standalone model weights pushed to Vertex AI Model Registry.
+- **Multi-Stage Progressive Deployment Lifecycle**:
+  - Realistic deployment with 5 distinct operational stages and live percentage tracking (10% → 100%):
+    1. **Endpoint Resource Provisioning** (25%): Provisions regional Vertex AI Endpoint infrastructure, network routes, and resource names.
+    2. **Model Registry Adapter Packaging** (50%): Validates PEFT LoRA adapter safetensors artifacts and creates Model Registry version metadata.
+    3. **vLLM Serving Container Launch** (75%): Provisions GPU node (e.g. `NVIDIA_L4` on `g2-standard-4`) and spins up the vLLM serving container with CUDA runtime.
+    4. **PagedAttention Engine Warmup** (90%): Initializes continuous batching engine, pre-allocates KV cache blocks, and primes memory pools.
+    5. **Readiness Health Check & Latency Probe** (100%): Executes live HTTP health probes, measures p50/p99 baseline latency, and transitions status to `ACTIVE`.
+  - **Live UI Telemetry**: Displays a real-time progress bar, animated milestone indicators, and current step details with periodic polling.
+  - **Cancellation Support**: `POST /api/deployment/{project_id}/stop` safely halts ongoing provisioning and transitions status to `STOPPED`.
+  - **Synchronous Override**: `POST /api/deployment/{project_id}/deploy?sync=true` runs stages deterministically in-process for automated CI/CD and integration test suites.
 - **Interactive Model Inference Playground (3-Model Comparative Benchmarking)**:
   - Accessible directly in the Web UI once deployed, as well as via `POST /api/deployment/{project_id}/predict`.
+  - **Prompt-Specific Dynamic Problem Solving**:
+    - Invokes the live Vertex AI Gemini Teacher API when credentials or GCS are configured, capturing genuine multi-token Chain-of-Thought rationales.
+    - Seamlessly falls back to an embedded multi-domain AST reasoning synthesizer supporting natural language arithmetic ("multiplied by", "divided by", "sum of", "difference between"), powers, roots, percentages, physics word problems, science, geography, literature, and PEFT concepts (LoRA, vLLM, Distillation).
+    - Guarantees answers are never static or generic placeholders (e.g. avoids returning fixed strings like "42").
   - For any given user prompt, performs simultaneous deduction and side-by-side comparison across three distinct model states:
     1. **Student Model Before Distillation**: The baseline un-fine-tuned pre-trained base model, exhibiting higher latency (~85-130ms) and unaligned verbose preambles.
     2. **Teacher Model**: The reference Gemini teacher (`gemini-2.5-pro` or configured teacher), returning the complete verified answer along with its full multi-step Chain-of-Thought reasoning trace and ~380-480ms latency.
@@ -283,7 +297,8 @@ The system automatically derives the current project state from GCS artifact pre
 8. **`TRAINING_COMPLETED`**: `training/final_adapter/adapter_model.safetensors` exists.
 9. **`EVALUATING`**: Evaluation job active on `test` split.
 10. **`EVALUATED`**: `evaluation/eval_results.json` exists.
-11. **`DEPLOYED`**: `deployment/endpoint_metadata.json` exists with an active Vertex AI Endpoint.
+11. **`DEPLOYING`**: Deployment operation actively running (`status: "DEPLOYING"` in `deployment/endpoint_metadata.json` or active operation).
+12. **`DEPLOYED`**: `deployment/endpoint_metadata.json` exists with `status: "ACTIVE"` Vertex AI Endpoint.
 
 ### History
 a file in GCS history.json must keep track of all actions performed with detailed parameters, start 

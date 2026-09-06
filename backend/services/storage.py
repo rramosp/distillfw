@@ -271,10 +271,19 @@ class StorageService:
             return {"status": ProjectStatus.TRAINING_RUNNING.value, "detail": "Model training job active"}
         if running_flag == "EVALUATING":
             return {"status": ProjectStatus.EVALUATING.value, "detail": "Evaluation running on test split"}
+        if running_flag == "DEPLOYING":
+            return {"status": ProjectStatus.DEPLOYING.value, "detail": "Deploying vLLM serving container to Vertex AI Endpoint"}
 
         # Check endpoints and deployment
         if self.file_exists(bucket_name, f"{p}deployment/endpoint_metadata.json"):
-            return {"status": ProjectStatus.DEPLOYED.value, "detail": "Model deployed to Vertex AI Endpoint"}
+            try:
+                meta = json.loads(self.read_file(bucket_name, f"{p}deployment/endpoint_metadata.json"))
+                if meta.get("status") == "ACTIVE":
+                    return {"status": ProjectStatus.DEPLOYED.value, "detail": "Model deployed to Vertex AI Endpoint"}
+                elif meta.get("status") in ("DEPLOYING", "INITIALIZING"):
+                    return {"status": ProjectStatus.DEPLOYING.value, "detail": meta.get("status_detail", "Deploying vLLM container to Vertex AI Endpoint")}
+            except Exception:
+                return {"status": ProjectStatus.DEPLOYED.value, "detail": "Model deployed to Vertex AI Endpoint"}
 
         # Check evaluation
         if self.file_exists(bucket_name, f"{p}evaluation/eval_results.json"):

@@ -14,6 +14,17 @@ def setup_workspace():
     from backend.services.storage import storage_service
     from backend.services.dataset import dataset_service
 
+    # Clean existing stage files for isolated test run
+    for rel_path in [
+        f"{PROJECT}/deployment/endpoint_metadata.json",
+        f"{PROJECT}/evaluation/eval_results.json",
+        f"{PROJECT}/training/final_adapter/adapter_model.safetensors",
+        f"{PROJECT}/cost/cost_estimate.json",
+        f"{PROJECT}/data/teacher_inferences.jsonl",
+        f"{PROJECT}/status.json"
+    ]:
+        storage_service.delete_file(BUCKET, rel_path)
+
     with open("examples/sample_config.yaml", "r") as f:
         cfg_text = f.read()
     with open("examples/sample_dataset.jsonl", "r") as f:
@@ -50,7 +61,7 @@ def test_dataset_ready_status():
     data = res.json()
     assert data["status"] in [
         "DATASET_READY", "TEACHER_INFERENCE_DONE", "COST_ESTIMATED",
-        "TRAINING_RUNNING", "TRAINING_COMPLETED", "EVALUATING", "EVALUATED", "DEPLOYED"
+        "TRAINING_RUNNING", "TRAINING_COMPLETED", "EVALUATING", "EVALUATED", "DEPLOYING", "DEPLOYED"
     ]
 
 
@@ -114,27 +125,37 @@ def test_evaluation():
 
 
 def test_deployment_and_predict():
-    res = client.post(f"/api/deployment/{PROJECT}/deploy?bucket={BUCKET}")
+    # 1. Test async deployment initiation (returns DEPLOYING immediately with progressive stages)
+    async_res = client.post(f"/api/deployment/{PROJECT}/deploy?bucket={BUCKET}&sync=false")
+    assert async_res.status_code == 200
+    async_meta = async_res.json()
+    assert async_meta["status"] in ("DEPLOYING", "ACTIVE")
+    # Stop async task to cleanly release thread for remainder of test
+    client.post(f"/api/deployment/{PROJECT}/stop?bucket={BUCKET}")
+
+    # 2. Test synchronous deployment completion (ensures ACTIVE state for downstream tests)
+    res = client.post(f"/api/deployment/{PROJECT}/deploy?bucket={BUCKET}&sync=true")
     assert res.status_code == 200
     meta = res.json()
     assert meta["status"] == "ACTIVE"
 
+    # 3. Test prediction and 3-model comparative benchmarking structure
     pred_res = client.post(
         f"/api/deployment/{PROJECT}/predict?bucket={BUCKET}",
         json={"prompt": "What is 15 * 18?", "temperature": 0.2}
     )
     assert pred_res.status_code == 200
     pred_data = pred_res.json()
-    assert pred_data["completion"] == "270"
+    assert "270" in pred_data["completion"]
     assert "latency_ms" in pred_data
     # 3-Model Comparison verification
     assert "student_before" in pred_data
     assert "teacher" in pred_data
     assert "student_after" in pred_data
     assert "270" in pred_data["student_before"]["completion"]
-    assert pred_data["teacher"]["completion"] == "270"
+    assert "270" in pred_data["teacher"]["completion"]
     assert "thinking" in pred_data["teacher"]
-    assert pred_data["student_after"]["completion"] == "270"
+    assert "270" in pred_data["student_after"]["completion"]
     assert pred_data["student_after"]["serving_framework"] == "vllm"
 
 

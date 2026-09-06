@@ -19,10 +19,11 @@ class PredictRequest(BaseModel):
 @router.post("/{project_id}/deploy")
 def deploy_model(
     project_id: str,
-    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET),
+    sync: bool = Query(default=False)
 ):
     try:
-        return deployment_service.deploy_endpoint(bucket, project_id)
+        return deployment_service.deploy_endpoint(bucket, project_id, sync=sync)
     except Exception as e:
         raise HTTPException(status_code=400, detail=str(e))
 

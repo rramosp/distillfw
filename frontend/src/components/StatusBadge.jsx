@@ -55,6 +55,11 @@ const STATUS_CONFIGS = {
     bg: 'bg-emerald-950 text-emerald-300 border-emerald-800',
     icon: Award
   },
+  DEPLOYING: {
+    label: 'Deploying vLLM Endpoint',
+    bg: 'bg-emerald-950 text-emerald-300 border-emerald-700 animate-pulse',
+    icon: Rocket
+  },
   DEPLOYED: {
     label: 'Deployed (vLLM Live)',
     bg: 'bg-green-950 text-green-300 border-green-700',
