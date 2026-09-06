@@ -500,15 +500,19 @@ Launches training using `transformers.Trainer` with PEFT LoRA and the custom `GC
 
 #### A. Using the Web UI
 1. Navigate to **5. Model training** in the tab bar.
-2. If running locally without GCP GPU quotas, check the **Dry-run / Local Worker** box; otherwise, leave unchecked to submit to Vertex AI Custom Training.
+2. If running locally without GCP GPU quotas, check the **Dry-run / Local Worker** box; otherwise, leave unchecked to submit directly to **Vertex AI Custom Training**.
 3. Click **Launch Training Job** in the header or scroll to the bottom and click the prominent **start distillation training** button.
-4. As training begins, action buttons are disabled and replaced with a **Stop Training** button to allow stopping if necessary.
-5. The live telemetry dashboard streams real-time updates:
+4. As training begins, the UI immediately displays:
+   - **Vertex AI CustomJob Resource**: Displays the full GCP resource name (e.g., `projects/.../customJobs/...`).
+   - **Vertex AI Console Link**: Click **Vertex AI Console ↗** to view logs and live GPU metrics directly in the Google Cloud Console.
+   - **Hardware Spec**: Verifies allocated machine type (e.g. `g2-standard-8`) and accelerator type (e.g. `NVIDIA_L4 x1`).
+   - The primary action buttons are replaced with a **Stop Training** button to cleanly cancel the active Vertex AI CustomJob.
+5. The live telemetry dashboard streams real-time updates directly from GCS:
    - **Worker Heartbeat**: Indicates active worker liveness and timestamp.
    - **Training Loss Curve**: Live SVG chart displaying train loss and eval loss over global steps.
    - **Hardware Utilization**: Live progress bars displaying GPU compute utilization % and VRAM allocated (GB).
    - **Throughput**: Tokens processed per second.
-6. Upon completion, the status badge transitions to **`TRAINING_COMPLETED`**, the PEFT adapter weights (`adapter_model.safetensors`) are stored in `training/final_adapter/`, and the buttons switch to **Start Over** (which clears metrics and checkpoints if you wish to launch a new training run).
+6. Upon completion, the status badge transitions to **`TRAINING_COMPLETED`**, the PEFT adapter weights (`adapter_model.safetensors` and `adapter_config.json`) are stored in `training/final_adapter/` in GCS, and the buttons switch to **Start Over** (which clears metrics and checkpoints if you wish to launch a new training run).
 
 #### B. Using the REST API
 

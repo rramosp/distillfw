@@ -43,6 +43,22 @@ class GCSProgressCallback(TrainerCallback):
         self.buffered_metrics = []
         self._stop_heartbeat = threading.Event()
         self._heartbeat_thread = None
+
+        # Direct GCS client setup for standalone container execution
+        self._gcs_client = None
+        self._gcs_bucket = None
+        if self.gcs_workspace.startswith("gs://") and not self.storage_service:
+            try:
+                from google.cloud import storage
+                self._gcs_client = storage.Client()
+                parts = self.gcs_workspace[5:].split("/", 1)
+                b = self.bucket or parts[0]
+                if not self.project_id and len(parts) > 1:
+                    self.project_id = parts[1].strip("/")
+                self._gcs_bucket = self._gcs_client.bucket(b)
+            except Exception as gcs_init_err:
+                print(f"Notice: GCS client initialization in callback: {gcs_init_err}")
+
         self._start_heartbeat_daemon()
 
     def _start_heartbeat_daemon(self):
@@ -77,6 +93,15 @@ class GCSProgressCallback(TrainerCallback):
             except Exception:
                 pass
 
+        if self._gcs_bucket and self.project_id:
+            try:
+                blob = self._gcs_bucket.blob(f"{self.project_id}/training/metrics.jsonl")
+                existing = blob.download_as_text() if blob.exists() else ""
+                blob.upload_from_string(existing + line, content_type="application/jsonl")
+                return
+            except Exception as gcs_err:
+                print(f"Notice uploading metric to GCS: {gcs_err}")
+
         # Fallback local path
         if self.gcs_workspace.startswith("gs://"):
             parts = self.gcs_workspace[5:].split("/", 1)
@@ -109,6 +134,14 @@ class GCSProgressCallback(TrainerCallback):
                 return
             except Exception:
                 pass
+
+        if self._gcs_bucket and self.project_id:
+            try:
+                blob = self._gcs_bucket.blob(f"{self.project_id}/training/heartbeat.json")
+                blob.upload_from_string(content, content_type="application/json")
+                return
+            except Exception as gcs_err:
+                print(f"Notice uploading heartbeat to GCS: {gcs_err}")
 
         if self.gcs_workspace.startswith("gs://"):
             parts = self.gcs_workspace[5:].split("/", 1)

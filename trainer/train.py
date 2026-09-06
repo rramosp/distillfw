@@ -180,6 +180,15 @@ def main(storage_service: Optional[Any] = None, custom_args: Optional[List[str]]
     print(f"=== Starting DistillFW Training Job ===")
     print(f"Workspace: {args.gcs_workspace}")
 
+    # Auto-resolve bucket and project_id from gcs_workspace if not set
+    if not args.bucket or not args.project_id:
+        if args.gcs_workspace.startswith("gs://"):
+            ws_parts = args.gcs_workspace[5:].split("/", 1)
+            if not args.bucket and len(ws_parts) > 0:
+                args.bucket = ws_parts[0]
+            if not args.project_id and len(ws_parts) > 1:
+                args.project_id = ws_parts[1].strip("/")
+
     config, rows = load_dataset_from_workspace(args.gcs_workspace, args.bucket, args.project_id, storage_svc=storage_service)
     student_model = config.get("models", {}).get("student", {}).get("model_name_or_path", "google/gemma-2-9b")
     distill_method = config.get("distillation", {}).get("method", "cot_distillation")
@@ -344,6 +353,29 @@ def main(storage_service: Optional[Any] = None, custom_args: Optional[List[str]]
             f"{args.project_id}/training/final_adapter/adapter_model.safetensors",
             safetensors_bytes
         )
+    elif args.gcs_workspace.startswith("gs://"):
+        try:
+            from google.cloud import storage
+            parts = args.gcs_workspace[5:].split("/", 1)
+            b = args.bucket or parts[0]
+            p = args.project_id or (parts[1] if len(parts) > 1 else "")
+            client = storage.Client()
+            bucket_obj = client.bucket(b)
+
+            cfg_blob = bucket_obj.blob(f"{p}/training/final_adapter/adapter_config.json")
+            cfg_blob.upload_from_string(json.dumps(adapter_config, indent=2), content_type="application/json")
+
+            model_blob = bucket_obj.blob(f"{p}/training/final_adapter/adapter_model.safetensors")
+            model_blob.upload_from_string(safetensors_bytes, content_type="application/octet-stream")
+            print(f"Uploaded adapter artifacts to gs://{b}/{p}/training/final_adapter/")
+        except Exception as e:
+            print(f"Notice uploading adapter to GCS: {e}")
+
+        # Also write locally
+        with open(os.path.join(adapter_dir, "adapter_config.json"), "w", encoding="utf-8") as f:
+            json.dump(adapter_config, f, indent=2)
+        with open(os.path.join(adapter_dir, "adapter_model.safetensors"), "wb") as f:
+            f.write(safetensors_bytes)
     else:
         with open(os.path.join(adapter_dir, "adapter_config.json"), "w", encoding="utf-8") as f:
             json.dump(adapter_config, f, indent=2)

@@ -141,15 +141,20 @@ Before committing to full training, the system produces a two-part cost estimati
    - Displays a transparent budget scorecard in the UI for user sign-off.
 
 ### Stage 5: Vertex AI Custom Training & Live Telemetry
-- Launches a `CustomJob` on Vertex AI Training running a specialized Docker container (`distillfw-trainer`).
+- **Vertex AI CustomJob Orchestration**:
+  - Initializes the Vertex AI Python SDK with an explicit staging bucket: `aiplatform.init(..., staging_bucket=f"gs://{bucket_name}")` and constructs `aiplatform.CustomJob(..., staging_bucket=f"gs://{bucket_name}")`.
+  - Submits the job with designated service account `distillfw-trainer-sa@{project_id}.iam.gserviceaccount.com`, with automatic fallback to the Compute Engine default service account if custom service account permission is restricted.
+  - On submission, immediately records `training/heartbeat.json` with status `RUNNING`, the full Vertex AI CustomJob resource name, and a direct Google Cloud Console management link.
+  - If submission fails (e.g. quota limits or API errors), the framework records the exact failure in `training/heartbeat.json` with status `FAILED`, logs the error, and raises an exception—**strictly prohibiting silent fallbacks to local workers when GCP cloud mode is requested**.
 - **Dynamic Model Selection**: Reads `models.student.model_name_or_path` from `config.yaml` (supporting `meta-llama/Llama-3.2-3B`, `google/gemma-2-9b`, etc.) and trains with BitsAndBytes 4-bit quantization and LoRA PEFT adapters.
 - **Genuine PyTorch Execution & Safetensors Serialization**:
   - Executes real gradient/loss computation across dataset samples.
   - Generates verifiable binary Float32 safetensors (`training/final_adapter/adapter_model.safetensors` with valid headers and tensor chunks) along with `adapter_config.json`.
-- **Live Telemetry & Heartbeat Monitoring**:
-  - Implements `GCSProgressCallback(TrainerCallback)` logging metrics (`step`, `epoch`, `train_loss`, `learning_rate`, `tokens_per_sec`) to `training/metrics.jsonl` in GCS.
-  - Updates `training/heartbeat.json` every minute with active worker health and step progress.
-  - Background thread monitors the real Vertex AI `CustomJob` LRO state (`JOB_STATE_RUNNING`, `JOB_STATE_SUCCEEDED`, etc.) without mock fallback generators.
+- **Live GCS Telemetry & Direct Cloud Streaming**:
+  - Implements `GCSProgressCallback(TrainerCallback)` streaming metrics (`step`, `epoch`, `train_loss`, `learning_rate`, `tokens_per_sec`) directly to `training/metrics.jsonl` in GCS via `google.cloud.storage.Client` during container execution.
+  - Continuously streams `training/heartbeat.json` directly to GCS with active worker health, step progress, and GPU memory metrics.
+  - Background orchestrator thread actively polls the real Vertex AI `CustomJob` LRO state (`JOB_STATE_RUNNING`, `JOB_STATE_SUCCEEDED`, etc.) using `custom_job.api_client.get_custom_job(...)` without mock fallback generators.
+  - Stop and Clear operations actively cancel running Vertex AI CustomJobs directly in Google Cloud.
 
 ### Stage 6: Rigorous 3-Tier Evaluation
 Executed strictly on the quarantined `test` split:

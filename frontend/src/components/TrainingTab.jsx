@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Cpu, Play, RefreshCw, Activity, CheckCircle2, AlertCircle, HardDrive, BarChart3, Square, RotateCcw } from 'lucide-react';
+import { Cpu, Play, RefreshCw, Activity, CheckCircle2, AlertCircle, HardDrive, BarChart3, Square, RotateCcw, ExternalLink } from 'lucide-react';
 import { startTraining, stopTraining, clearTraining, fetchTrainingMetrics, fetchTrainingHeartbeat } from '../api';
 
 export default function TrainingTab({ bucket, projectId, onStatusChange }) {
@@ -180,17 +180,55 @@ export default function TrainingTab({ bucket, projectId, onStatusChange }) {
         </div>
       </div>
 
-      {errorMsg && (
-        <div className="p-4 bg-rose-950/80 border border-rose-800 rounded-lg text-rose-300 text-xs flex items-center gap-2">
-          <AlertCircle className="w-4 h-4 shrink-0" />
-          <span>{errorMsg}</span>
+      {(errorMsg || heartbeat?.error) && (
+        <div className="p-4 bg-rose-950/80 border border-rose-800 rounded-lg text-rose-300 text-xs flex items-start gap-2">
+          <AlertCircle className="w-4 h-4 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <span className="font-semibold">Training Error:</span>
+            <p className="font-mono">{errorMsg || heartbeat?.error}</p>
+          </div>
+        </div>
+      )}
+
+      {/* Vertex AI Job Details Card */}
+      {heartbeat?.job_id && (
+        <div className="bg-slate-800/80 border border-indigo-900/50 rounded-xl p-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+          <div className="space-y-1">
+            <div className="flex items-center gap-2">
+              <span className="px-2 py-0.5 rounded text-[10px] font-semibold uppercase tracking-wider bg-indigo-900/60 text-indigo-300 border border-indigo-700">
+                {heartbeat?.mode === 'vertex_ai' ? 'Vertex AI CustomJob' : 'Local Worker'}
+              </span>
+              <span className={`font-semibold ${heartbeat?.status === 'RUNNING' ? 'text-emerald-400' : heartbeat?.status === 'COMPLETED' ? 'text-blue-400' : heartbeat?.status === 'FAILED' ? 'text-rose-400' : 'text-slate-300'}`}>
+                {heartbeat?.status}
+              </span>
+            </div>
+            <div className="text-slate-300 font-mono text-[11px] break-all">
+              {heartbeat?.job_id}
+            </div>
+            {heartbeat?.machine_type && (
+              <div className="text-slate-400 text-[11px]">
+                Hardware: <span className="text-cyan-300 font-mono">{heartbeat.machine_type}</span> ({heartbeat.accelerator_type || 'GPU'})
+              </div>
+            )}
+          </div>
+          {heartbeat?.web_url && (
+            <a
+              href={heartbeat.web_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-300 border border-indigo-500/30 transition-colors whitespace-nowrap text-xs"
+            >
+              <span>Vertex AI Console</span>
+              <ExternalLink className="w-3.5 h-3.5" />
+            </a>
+          )}
         </div>
       )}
 
       {/* Heartbeat Status Indicator */}
       <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
         <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 flex items-center gap-3">
-          <div className={`w-3 h-3 rounded-full ${heartbeat?.status === 'RUNNING' ? 'bg-emerald-400 animate-pulse' : heartbeat?.status === 'COMPLETED' ? 'bg-blue-400' : 'bg-slate-600'}`} />
+          <div className={`w-3 h-3 rounded-full ${heartbeat?.status === 'RUNNING' ? 'bg-emerald-400 animate-pulse' : heartbeat?.status === 'COMPLETED' ? 'bg-blue-400' : heartbeat?.status === 'FAILED' ? 'bg-rose-500' : 'bg-slate-600'}`} />
           <div>
             <div className="text-[10px] text-slate-400 uppercase font-semibold">Worker Heartbeat</div>
             <div className="text-sm font-bold text-white mt-0.5">{heartbeat?.status || 'IDLE'}</div>

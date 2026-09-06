@@ -172,7 +172,12 @@ To remove and completely tear down all GCP cloud resources and local artifacts c
 1. **Terraform Destroy**: Destroys all state-tracked resources via `terraform destroy -auto-approve`. `deploy.sh` automatically configures `deletion_protection = false` in `terraform.tfvars` and normalizes state instances for Cloud Run services, preventing errors such as `cannot destroy service without setting deletion_protection=false and running terraform apply`.
 2. **Cloud Run Services**: Discovers and deletes all DistillFW Cloud Run services (`distillfw-backend`, `distillfw-frontend`, and any service matching `distillfw*`).
 3. **Artifact Registry**: Deletes all DistillFW container repositories (`distillfw-docker-repo`, `distillfw-repo`).
-4. **Vertex AI Prediction Endpoints & Models**: Undeploys and deletes all Vertex AI endpoints and custom models created by DistillFW.
+4. **Vertex AI Jobs, Endpoints, Models, Tensorboards & Cloud Run Jobs**:
+   - Discovers all Vertex AI CustomJobs, cancels any active jobs (`RUNNING`, `PENDING`, `QUEUED`), and deletes them permanently via the Vertex AI Python SDK.
+   - Cancels and deletes all Vertex AI PipelineJobs, HyperparameterTuningJobs, and BatchPredictionJobs.
+   - Deletes all Vertex AI Tensorboards.
+   - Undeploys all models from Vertex AI endpoints and deletes all endpoints and custom models (`distillfw-*`).
+   - Deletes any Cloud Run jobs matching `distillfw*`.
 5. **IAM Service Accounts & Bindings**: Deletes all DistillFW IAM service accounts (`distillfw-backend-sa`, `distillfw-trainer-sa`, `distillfw-training-sa`, and any matching `distillfw-*`), and automatically cleans all DistillFW role bindings (including tombstoned `deleted:serviceAccount:distillfw-*` entries) from the project IAM policy.
 6. **GCS Workspace Buckets**: Recursively purges and deletes the workspaces bucket (`gs://distillfw-workspaces`) and any additional DistillFW buckets (`gs://distillfw-*`).
 7. **Local State & Build Caches**: Removes all Terraform state files (`terraform.tfstate*`, `.terraform/`, `terraform.tfvars`), local filesystem workspaces (`.local_workspace/`), and compiled frontend assets (`frontend/dist/`).

@@ -138,30 +138,159 @@ PYEOF
     gcloud artifacts repositories delete "$repo_name" --project="$PROJECT_ID" --location="$REGION" --quiet 2>/dev/null || warn "Failed to delete repo $repo_name"
   done
 
-  # 4. Cleanup Vertex AI Endpoints and Models
-  info "Step 4/7: Cleaning up Vertex AI Endpoints and Models..."
-  ENDPOINTS=$(gcloud ai endpoints list --project="$PROJECT_ID" --region="$REGION" --format="value(name)" 2>/dev/null || true)
-  for ep in $ENDPOINTS; do
-    ep_id=$(basename "$ep")
-    disp=$(gcloud ai endpoints describe "$ep_id" --project="$PROJECT_ID" --region="$REGION" --format="value(displayName)" 2>/dev/null || true)
-    if [[ "$disp" =~ distillfw ]] || [[ "$disp" =~ distill- ]] || [[ "$ep_id" =~ distill ]]; then
-      info "  Undeploying models and deleting Vertex AI endpoint '$disp' ($ep_id)..."
-      DEPLOYED_MODELS=$(gcloud ai endpoints describe "$ep_id" --project="$PROJECT_ID" --region="$REGION" --format="value(deployedModels.id)" 2>/dev/null || true)
-      for dm in $DEPLOYED_MODELS; do
-        gcloud ai endpoints undeploy-model "$ep_id" --project="$PROJECT_ID" --region="$REGION" --deployed-model-id="$dm" --quiet 2>/dev/null || true
-      done
-      gcloud ai endpoints delete "$ep_id" --project="$PROJECT_ID" --region="$REGION" --quiet 2>/dev/null || warn "Failed to delete endpoint $ep_id"
-    fi
-  done
+  # 4. Cleanup Vertex AI Jobs, Endpoints, Models, Tensorboards, and Cloud Run Jobs
+  info "Step 4/7: Cleaning up Vertex AI CustomJobs, PipelineJobs, HPTuning, Batch Jobs, Tensorboards, Endpoints, and Models..."
+  python3 - <<EOF
+import sys, time
+from google.cloud import aiplatform
 
-  MODELS=$(gcloud ai models list --project="$PROJECT_ID" --region="$REGION" --format="value(name)" 2>/dev/null || true)
-  for m in $MODELS; do
-    m_id=$(basename "$m")
-    disp=$(gcloud ai models describe "$m_id" --project="$PROJECT_ID" --region="$REGION" --format="value(displayName)" 2>/dev/null || true)
-    if [[ "$disp" =~ distillfw ]] || [[ "$disp" =~ distill- ]] || [[ "$m_id" =~ distill ]]; then
-      info "  Deleting Vertex AI model '$disp' ($m_id)..."
-      gcloud ai models delete "$m_id" --project="$PROJECT_ID" --region="$REGION" --quiet 2>/dev/null || warn "Failed to delete model $m_id"
-    fi
+project_id = "${PROJECT_ID}"
+region = "${REGION}"
+
+try:
+    aiplatform.init(project=project_id, location=region)
+    print(f"  Initialized Vertex AI SDK for {project_id} in {region}")
+
+    # 1. CustomJobs
+    try:
+        custom_jobs = aiplatform.CustomJob.list()
+        for cj in custom_jobs:
+            disp = cj.display_name or ""
+            rname = cj.resource_name or ""
+            if "distill" in disp.lower() or "distill" in rname.lower():
+                print(f"  Found CustomJob: {disp} ({rname}) - State: {cj.state}")
+                try:
+                    state_str = str(cj.state)
+                    if any(s in state_str for s in ["RUNNING", "PENDING", "QUEUED", "1", "2", "3"]):
+                        print(f"    Cancelling active CustomJob {disp}...")
+                        cj.cancel()
+                        time.sleep(2)
+                except Exception as ce:
+                    print(f"    Notice cancelling {disp}: {ce}")
+                try:
+                    print(f"    Deleting CustomJob {disp}...")
+                    cj.delete()
+                    print(f"    ✓ Deleted CustomJob {disp}")
+                except Exception as de:
+                    print(f"    Notice deleting {disp}: {de}")
+    except Exception as e:
+        print(f"  Notice during CustomJobs cleanup: {e}", file=sys.stderr)
+
+    # 2. PipelineJobs
+    try:
+        pipeline_jobs = aiplatform.PipelineJob.list()
+        for pj in pipeline_jobs:
+            disp = pj.display_name or ""
+            if "distill" in disp.lower():
+                print(f"  Found PipelineJob: {disp}")
+                try:
+                    pj.cancel()
+                except Exception:
+                    pass
+                try:
+                    pj.delete()
+                    print(f"    ✓ Deleted PipelineJob {disp}")
+                except Exception as de:
+                    print(f"    Notice deleting PipelineJob {disp}: {de}")
+    except Exception as e:
+        print(f"  Notice during PipelineJobs cleanup: {e}", file=sys.stderr)
+
+    # 3. HyperparameterTuningJobs
+    try:
+        hp_jobs = aiplatform.HyperparameterTuningJob.list()
+        for hj in hp_jobs:
+            disp = hj.display_name or ""
+            if "distill" in disp.lower():
+                try:
+                    hj.cancel()
+                except Exception:
+                    pass
+                try:
+                    hj.delete()
+                    print(f"    ✓ Deleted HyperparameterTuningJob {disp}")
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"  Notice during HyperparameterTuningJobs cleanup: {e}", file=sys.stderr)
+
+    # 4. BatchPredictionJobs
+    try:
+        bp_jobs = aiplatform.BatchPredictionJob.list()
+        for bj in bp_jobs:
+            disp = bj.display_name or ""
+            if "distill" in disp.lower():
+                try:
+                    bj.cancel()
+                except Exception:
+                    pass
+                try:
+                    bj.delete()
+                    print(f"    ✓ Deleted BatchPredictionJob {disp}")
+                except Exception:
+                    pass
+    except Exception as e:
+        print(f"  Notice during BatchPredictionJobs cleanup: {e}", file=sys.stderr)
+
+    # 5. Tensorboards
+    try:
+        tb_list = aiplatform.Tensorboard.list()
+        for tb in tb_list:
+            disp = tb.display_name or ""
+            if "distill" in disp.lower():
+                try:
+                    tb.delete()
+                    print(f"    ✓ Deleted Tensorboard {disp}")
+                except Exception as de:
+                    print(f"    Notice deleting Tensorboard {disp}: {de}")
+    except Exception as e:
+        print(f"  Notice during Tensorboards cleanup: {e}", file=sys.stderr)
+
+    # 6. Endpoints & Deployed Models
+    try:
+        endpoints = aiplatform.Endpoint.list()
+        for ep in endpoints:
+            disp = ep.display_name or ""
+            rname = ep.resource_name or ""
+            if "distill" in disp.lower() or "distill" in rname.lower():
+                print(f"  Found Endpoint: {disp} ({rname})")
+                try:
+                    print(f"    Undeploying all models from {disp}...")
+                    ep.undeploy_all()
+                except Exception as ue:
+                    print(f"    Notice undeploying from {disp}: {ue}")
+                try:
+                    print(f"    Deleting endpoint {disp}...")
+                    ep.delete()
+                    print(f"    ✓ Deleted Endpoint {disp}")
+                except Exception as de:
+                    print(f"    Notice deleting endpoint {disp}: {de}")
+    except Exception as e:
+        print(f"  Notice during Endpoints cleanup: {e}", file=sys.stderr)
+
+    # 7. Models
+    try:
+        models = aiplatform.Model.list()
+        for m in models:
+            disp = m.display_name or ""
+            rname = m.resource_name or ""
+            if "distill" in disp.lower() or "distill" in rname.lower():
+                print(f"  Found Model: {disp} ({rname})")
+                try:
+                    m.delete()
+                    print(f"    ✓ Deleted Model {disp}")
+                except Exception as de:
+                    print(f"    Notice deleting Model {disp}: {de}")
+    except Exception as e:
+        print(f"  Notice during Models cleanup: {e}", file=sys.stderr)
+
+except Exception as global_err:
+    print(f"Notice during Vertex AI cleanup: {global_err}", file=sys.stderr)
+EOF
+
+  RUN_JOBS=$(gcloud run jobs list --project="$PROJECT_ID" --region="$REGION" --format="value(name)" 2>/dev/null | grep -E '^distillfw' || true)
+  for rj in $RUN_JOBS; do
+    info "  Deleting Cloud Run job '$rj'..."
+    gcloud run jobs delete "$rj" --project="$PROJECT_ID" --region="$REGION" --quiet 2>/dev/null || warn "Failed to delete Cloud Run job $rj"
   done
 
   # 5. Delete Service Accounts & Clean Project IAM Policy Bindings
