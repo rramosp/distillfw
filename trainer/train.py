@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 try:
     import torch
     import torch.nn as nn
+    import torch.nn.functional as F
     from transformers import (
         AutoTokenizer,
         AutoModelForCausalLM,
@@ -21,11 +22,14 @@ try:
     )
     from datasets import Dataset
     HAS_TORCH = True
-except ImportError:
+except (ImportError, ModuleNotFoundError):
     torch = None
+    nn = None
+    F = None
     Trainer = object
     TrainingArguments = Any
     DataCollatorForSeq2Seq = Any
+    Dataset = Any
     HAS_TORCH = False
 
 from trainer.distillation_loss import (
@@ -176,7 +180,7 @@ def main(storage_service: Optional[Any] = None, custom_args: Optional[List[str]]
         # Simulate training steps with authentic loss trajectory
         total_steps = 20
         for step in range(1, total_steps + 1):
-            time.sleep(0.2)
+            time.sleep(0.2 if not args.dry_run else 0.01)
             train_loss = round(2.8 * (0.92 ** step) + 0.15, 4)
             val_loss = round(2.9 * (0.93 ** step) + 0.18, 4)
             entry = {

@@ -1,5 +1,4 @@
 import pytest
-torch = pytest.importorskip("torch")
 from trainer.distillation_loss import (
     compute_seq_kd_loss,
     compute_cot_loss,
@@ -8,7 +7,24 @@ from trainer.distillation_loss import (
 )
 
 
+def test_loss_runtime_guard_without_torch(monkeypatch):
+    import trainer.distillation_loss as dloss
+    orig_torch = dloss.torch
+    orig_has = dloss.HAS_TORCH
+    try:
+        dloss.torch = None
+        dloss.HAS_TORCH = False
+        with pytest.raises(RuntimeError, match=r"PyTorch .* is required"):
+            dloss.compute_cot_loss(None, None)
+        with pytest.raises(RuntimeError, match=r"PyTorch .* is required"):
+            dloss.compute_seq_kd_loss(None, None)
+    finally:
+        dloss.torch = orig_torch
+        dloss.HAS_TORCH = orig_has
+
+
 def test_seq_kd_loss():
+    torch = pytest.importorskip("torch")
     batch_size = 2
     seq_len = 8
     vocab_size = 100
@@ -24,6 +40,7 @@ def test_seq_kd_loss():
 
 
 def test_cot_loss():
+    torch = pytest.importorskip("torch")
     batch_size = 2
     seq_len = 8
     vocab_size = 100
@@ -50,6 +67,7 @@ def test_cot_loss():
 
 
 def test_topk_soft_kd_loss():
+    torch = pytest.importorskip("torch")
     batch_size = 2
     seq_len = 8
     vocab_size = 50

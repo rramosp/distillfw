@@ -1,5 +1,6 @@
 """End-to-end integration tests for FastAPI backend and distillation stages."""
 
+import time
 import pytest
 from fastapi.testclient import TestClient
 from backend.main import app
@@ -109,6 +110,15 @@ def test_training_and_metrics():
     data = res.json()
     assert data["status"] in ["STARTED", "SUBMITTED"]
 
+    # Allow background dry_run local worker to finish and write adapter artifacts
+    for _ in range(40):
+        time.sleep(0.05)
+        hb_res = client.get(f"/api/training/{PROJECT}/heartbeat?bucket={BUCKET}")
+        if hb_res.status_code == 200:
+            hb = hb_res.json()
+            if hb and hb.get("status") == "COMPLETED":
+                break
+
     metrics_res = client.get(f"/api/training/{PROJECT}/metrics?bucket={BUCKET}")
     assert metrics_res.status_code == 200
 
@@ -138,6 +148,12 @@ def test_deployment_and_predict():
     assert res.status_code == 200
     meta = res.json()
     assert meta["status"] == "ACTIVE"
+    # Dual Endpoint Provisioning assertions
+    assert "endpoints" in meta and len(meta["endpoints"]) == 2
+    assert "endpoint_base" in meta
+    assert "endpoint_distilled" in meta
+    assert meta["endpoint_base"]["model_type"] == "base_student"
+    assert meta["endpoint_distilled"]["model_type"] == "distilled_student"
 
     # 3. Test prediction and 3-model comparative benchmarking structure
     pred_res = client.post(
@@ -157,6 +173,11 @@ def test_deployment_and_predict():
     assert "thinking" in pred_data["teacher"]
     assert "270" in pred_data["student_after"]["completion"]
     assert pred_data["student_after"]["serving_framework"] == "vllm"
+    # Verify outputs are NOT verbatim identical across personas
+    assert pred_data["student_before"]["completion"] != pred_data["student_after"]["completion"]
+    # Verify endpoint IDs on both student models
+    assert pred_data["student_before"].get("endpoint_id") is not None
+    assert pred_data["student_after"].get("endpoint_id") is not None
 
 
 def test_teacher_retries_diagnostics():

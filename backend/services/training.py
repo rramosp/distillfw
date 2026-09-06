@@ -124,7 +124,7 @@ class TrainingService:
                                 json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), "status": "STOPPED", "step": step}, indent=2)
                             )
                             break
-                        time.sleep(0.2)
+                        time.sleep(0.2 if not dry_run else 0.01)
                         train_loss = round(2.8 * (0.92 ** step) + 0.15, 4)
                         val_loss = round(2.9 * (0.93 ** step) + 0.18, 4)
                         entry = {

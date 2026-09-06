@@ -3,8 +3,10 @@ try:
     import torch.nn as nn
     import torch.nn.functional as F
     HAS_TORCH = True
-except ImportError:
+except (ImportError, ModuleNotFoundError):
     torch = None
+    nn = None
+    F = None
     HAS_TORCH = False
 
 from typing import Dict, Any, Optional
@@ -22,6 +24,9 @@ def compute_seq_kd_loss(
     Standard cross-entropy over teacher completion tokens.
     Shift logits and labels by 1 for causal language modeling.
     """
+    if not HAS_TORCH or torch is None or F is None:
+        raise RuntimeError("PyTorch (torch, torch.nn.functional) is required to compute SeqKD loss.")
+
     shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
     loss = F.cross_entropy(
@@ -45,12 +50,19 @@ def compute_cot_loss(
     Method 2: Distilling Step-by-Step CoT
     L_CoT = lambda_think * L_think + lambda_resp * L_resp
     """
+    if not HAS_TORCH or torch is None or F is None:
+        raise RuntimeError("PyTorch (torch, torch.nn.functional) is required to compute CoT loss.")
+
     shift_logits = logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
 
     vocab_size = shift_logits.size(-1)
-    loss_fct = nn.CrossEntropyLoss(ignore_index=ignore_index, reduction="none")
-    token_losses = loss_fct(shift_logits.view(-1, vocab_size), shift_labels.view(-1))
+    token_losses = F.cross_entropy(
+        shift_logits.view(-1, vocab_size),
+        shift_labels.view(-1),
+        ignore_index=ignore_index,
+        reduction="none"
+    )
     token_losses = token_losses.view(shift_labels.size())
 
     if think_mask is not None and resp_mask is not None:
@@ -83,6 +95,9 @@ def compute_topk_soft_kd_loss(
     Method 4: Top-k Soft Target KD
     L = (1 - alpha) * L_CE + alpha * L_KL
     """
+    if not HAS_TORCH or torch is None or F is None:
+        raise RuntimeError("PyTorch (torch, torch.nn.functional) is required to compute Top-k Soft KD loss.")
+
     # 1. Standard cross entropy
     shift_logits = student_logits[..., :-1, :].contiguous()
     shift_labels = labels[..., 1:].contiguous()
@@ -113,6 +128,8 @@ def compute_on_policy_gkd_loss(
     """
     Method 3: Generalized Knowledge Distillation (GKD) with Teacher reward feedback (DPO-style).
     """
+    if not HAS_TORCH or torch is None or F is None:
+        raise RuntimeError("PyTorch (torch, torch.nn.functional) is required to compute On-Policy GKD loss.")
     shift_student = student_logits[..., :-1, :].contiguous()
     shift_ref = ref_logits[..., :-1, :].contiguous()
     shift_tokens = student_tokens[..., 1:].contiguous()

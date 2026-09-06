@@ -615,37 +615,41 @@ curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/evaluation/d
 
 ---
 
-### Stage 7: Vertex AI Production vLLM Deployment & 3-Model Playground
+### Stage 7: Vertex AI Dual Production vLLM Deployment & 3-Model Playground
 
-Deploys the distilled model to a Vertex AI Endpoint running vLLM and benchmarks inference live across three model perspectives.
+Deploys both the Base Student and Distilled Student models to Vertex AI Endpoints running vLLM and benchmarks inference live across three model perspectives.
 
 #### A. Using the Web UI
 1. Navigate to **7. vLLM Deploy**.
-2. Click **Deploy to Vertex AI Endpoint**.
-3. **Deployment in Progress**:
+2. **Prerequisite Check**: Model Training (Stage 5) must have completed successfully and generated the trained adapter artifacts. If training has not been executed, an informational alert banner prompts you to complete Stage 5 first.
+3. Click **Deploy Dual Endpoints**.
+4. **Deployment in Progress**:
    - The deployment runs progressively across 5 operational milestones with live progress bar and status pills:
-     - Stage 1: *Endpoint Resource Provisioning* (25%)
+     - Stage 1: *Dual Endpoint Resource Provisioning* (25%)
      - Stage 2: *Model Registry Adapter Packaging* (50%)
-     - Stage 3: *vLLM Serving Container Launch on NVIDIA_L4* (75%)
+     - Stage 3: *Dual vLLM Serving Container Launch on NVIDIA_L4* (75%)
      - Stage 4: *PagedAttention Engine Warmup* (90%)
-     - Stage 5: *Readiness Health Check & Latency Probe* (100%)
+     - Stage 5: *Readiness Health Check & Latency Calibration* (100%)
    - While deploying, the workspace status badge displays an animated **DEPLOYING** indicator with a rocket icon.
    - You can safely interrupt deployment at any time by clicking **Stop Deployment**.
-4. Once active, the metadata card displays the active Endpoint URI, serving framework (`vLLM`), base model, and machine type. The header button changes to **Start Over** (which undeploys the endpoint and clears metadata).
-5. Scroll to the **Interactive Model Inference Playground**:
+5. Once active, the dual endpoint overview displays cards for both:
+   - **Distilled Student Endpoint**: Serves `google/gemma-2-9b + LoRA` on vLLM with PagedAttention (~38ms p50 latency, 3.25x speedup).
+   - **Base Student Endpoint**: Serves the baseline `google/gemma-2-9b` un-fine-tuned model on vLLM (~125ms p50 latency).
+   - The header button changes to **Start Over** (which undeploys both endpoints and clears metadata).
+6. Scroll to the **Interactive Model Inference Playground**:
    - Select one of the quick sample query chips (e.g., *"What is 25 multiplied by 14?"*, *"What is the capital of France?"*, *"What does LoRA stand for in machine learning?"*, *"Explain vLLM serving engine"*), or enter your own custom query.
    - Click **Predict**.
-   - Review the responsive **3-Column Comparison Grid**:
-     1. **1. Student (Before)**: Base pre-trained model answer, higher latency (~120ms), unaligned verbose deduction.
-     2. **2. Teacher Model**: Gemini reference answer, expandable Chain-of-Thought reasoning steps, latency (~450ms).
-     3. **3. Student (After)**: Distilled student model running on vLLM, direct concise domain-aligned answer (e.g. `350` for `25 * 14`), and lightning-fast latency (~38ms, ~12x faster than Teacher).
+   - Review the responsive **3-Column Comparison Grid** (demonstrating clear persona distinction and non-verbatim answers):
+     1. **1. Student (Before)**: Base pre-trained model answer from the Base Endpoint, higher latency (~125ms), unaligned text autocomplete behavior with conversational or verbose continuations.
+     2. **2. Teacher Model**: Gemini reference answer, expandable Chain-of-Thought reasoning steps, latency (~420ms).
+     3. **3. Student (After)**: Distilled student model running on the Distilled Endpoint with vLLM PagedAttention, direct concise domain-aligned answer (e.g. `350` for `25 * 14`), and lightning-fast latency (~38ms, 3.25x faster than Base model, 11x faster than Teacher).
 
 #### B. Using the REST API
 
 ##### Localhost (`http://localhost:8080`):
 
 ```bash
-# 1. Deploy to Vertex AI Endpoint (asynchronous progression)
+# 1. Deploy dual endpoints to Vertex AI (asynchronous progression)
 curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/deploy?bucket=distillfw-workspaces" | jq .
 
 # 1b. Deploy synchronously (completes immediately, ideal for automated CI/CD and test suites)
@@ -654,7 +658,7 @@ curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/deploy?
 # 2. Stop ongoing deployment (if needed)
 curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/stop?bucket=distillfw-workspaces"
 
-# 3. Check endpoint status (reports progress_pct, current_step, and milestone statuses)
+# 3. Check endpoint status (reports progress_pct, current_step, endpoints list, and milestone statuses)
 curl -s "http://localhost:8080/api/deployment/distill-gemma-math-v1/status?bucket=distillfw-workspaces" | jq .
 
 # 4. Send a test prediction query (returns 3-model comparative breakdown with prompt-specific answers)
@@ -672,7 +676,7 @@ curl -X POST "http://localhost:8080/api/deployment/distill-gemma-math-v1/clear?b
 ##### Deployed in GCP (Cloud Run with `Authorization` Header):
 
 ```bash
-# 1. Deploy to Vertex AI Endpoint
+# 1. Deploy dual endpoints to Vertex AI
 curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/distill-gemma-math-v1/deploy?bucket=distillfw-workspaces" \
   -H "Authorization: Bearer $(gcloud auth print-identity-token)" | jq .
 
@@ -796,15 +800,26 @@ curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
       "console_url": "https://console.cloud.google.com/vertex-ai/training/custom-jobs?project=distillfw"
     },
     {
-      "id": "vertex_endpoint",
-      "name": "endpoint-distill-gemma-math-v1",
+      "id": "vertex_endpoint_base",
+      "name": "endpoint-distill-gemma-math-v1-base-1725580000",
       "service": "Vertex AI Prediction",
-      "type": "Prediction Endpoint",
+      "type": "Prediction Endpoint (Base Student)",
       "category": "Serving",
-      "role": "Real-time serving endpoint hosting high-throughput vLLM engine with PagedAttention",
+      "role": "Baseline pre-trained Student model serving on vLLM without fine-tuning (pre-distillation benchmark)",
       "status": "ACTIVE",
-      "status_detail": "Online vLLM endpoint serving google/gemma-2-9b (avg latency: 38.4ms, 1 replica)",
-      "console_url": "https://console.cloud.google.com/vertex-ai/locations/us-central1/endpoints/endpoint-distill-gemma-math-v1?project=distillfw"
+      "status_detail": "Online vLLM endpoint serving un-fine-tuned baseline google/gemma-2-9b (avg latency: 124.8ms, 1 replica)",
+      "console_url": "https://console.cloud.google.com/vertex-ai/locations/us-central1/endpoints/endpoint-distill-gemma-math-v1-base-1725580000?project=distillfw"
+    },
+    {
+      "id": "vertex_endpoint_distilled",
+      "name": "endpoint-distill-gemma-math-v1-distilled-1725580000",
+      "service": "Vertex AI Prediction",
+      "type": "Prediction Endpoint (Distilled Student)",
+      "category": "Serving",
+      "role": "Distilled Student model endpoint hosting high-throughput vLLM engine with PagedAttention and PEFT LoRA adapter",
+      "status": "ACTIVE",
+      "status_detail": "Online vLLM endpoint serving distilled google/gemma-2-9b + LoRA (avg latency: 38.4ms, 3.25x speedup, 1 replica)",
+      "console_url": "https://console.cloud.google.com/vertex-ai/locations/us-central1/endpoints/endpoint-distill-gemma-math-v1-distilled-1725580000?project=distillfw"
     }
   ]
 }

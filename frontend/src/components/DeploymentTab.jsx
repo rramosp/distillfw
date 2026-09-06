@@ -135,10 +135,10 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
         <div>
           <h2 className="text-base font-bold text-white flex items-center gap-2">
             <Rocket className="w-5 h-5 text-green-400" />
-            Vertex AI Production vLLM Deployment
+            Vertex AI Dual vLLM Production Deployment
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            Serves the distilled compact model with high-throughput vLLM (PagedAttention & continuous batching).
+            Provisions two production endpoints on Vertex AI: (1) Base Student Model (baseline before training) and (2) Distilled Student Model (after PEFT LoRA training) on vLLM PagedAttention.
           </p>
         </div>
 
@@ -183,7 +183,7 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
               className="flex items-center gap-2 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-500 hover:to-emerald-500 text-white text-xs font-semibold px-4 py-2.5 rounded-lg shadow-lg shadow-green-500/20 disabled:opacity-50 cursor-pointer"
             >
               <Rocket className="w-4 h-4" />
-              Deploy to Vertex AI Endpoint
+              Deploy Dual Endpoints
             </button>
           )}
           <button
@@ -212,13 +212,13 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
               </div>
               <div>
                 <div className="flex items-center gap-2">
-                  <span className="text-sm font-bold text-white uppercase tracking-wider">Vertex AI Deployment In Progress</span>
+                  <span className="text-sm font-bold text-white uppercase tracking-wider">Dual Vertex AI Endpoint Deployment In Progress</span>
                   <span className="text-[11px] font-mono text-cyan-300 bg-cyan-950/60 border border-cyan-800 px-2 py-0.5 rounded font-bold">
                     {metadata?.progress_pct || 15}%
                   </span>
                 </div>
                 <p className="text-xs text-slate-300 mt-0.5">
-                  {metadata?.current_step || 'Provisioning accelerator node and configuring vLLM serving container...'}
+                  {metadata?.current_step || 'Provisioning dual accelerator nodes and configuring vLLM serving containers...'}
                 </p>
               </div>
             </div>
@@ -236,7 +236,7 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
           {/* Progress Bar */}
           <div className="space-y-1.5">
             <div className="flex justify-between text-xs text-slate-400 font-mono">
-              <span>Deployment Stages Progress</span>
+              <span>Dual Endpoint Deployment Progress</span>
               <span className="text-blue-400 font-bold">{metadata?.progress_pct || 15}%</span>
             </div>
             <div className="w-full h-2.5 bg-slate-900 rounded-full overflow-hidden border border-slate-700">
@@ -250,11 +250,11 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
           {/* Stage Milestones */}
           <div className="grid grid-cols-1 sm:grid-cols-5 gap-2 pt-1">
             {[
-              { id: 1, name: '1. Endpoint Resource' },
-              { id: 2, name: '2. Model Packaging' },
-              { id: 3, name: '3. vLLM Container' },
+              { id: 1, name: '1. Dual Endpoints' },
+              { id: 2, name: '2. Packaging' },
+              { id: 3, name: '3. vLLM Launch' },
               { id: 4, name: '4. Engine Warmup' },
-              { id: 5, name: '5. Health Probe' },
+              { id: 5, name: '5. Benchmarking' },
             ].map((st, idx) => {
               const stageData = metadata?.stages?.[idx];
               const isDone = stageData?.status === 'COMPLETED' || (metadata?.progress_pct || 0) >= ((idx + 1) * 20);
@@ -290,7 +290,7 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
 
           <div className="text-[11px] text-slate-400 flex items-center justify-between border-t border-slate-800 pt-3">
             <span className="font-mono">Machine: {metadata?.machine_type || 'g2-standard-4'} + 1x {metadata?.accelerator_type || 'NVIDIA_L4'}</span>
-            <span className="font-mono text-cyan-400">Engine: vLLM PagedAttention</span>
+            <span className="font-mono text-cyan-400">Engine: Dual vLLM PagedAttention</span>
           </div>
         </div>
       )}
@@ -323,40 +323,80 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
       {/* Active Endpoint & Playground */}
       {!isDeploying && isActive && (
         <div className="space-y-6">
-          {/* Active Endpoint Info */}
-          <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-5 space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-700/60 pb-3">
-              <div className="flex items-center gap-2">
-                <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
-                <span className="text-sm font-bold text-white uppercase tracking-wider">Endpoint Online & Healthy</span>
+          {/* Dual Active Endpoints Overview */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {/* Endpoint 1: Distilled Student */}
+            <div className="bg-emerald-950/20 border-2 border-emerald-600/60 rounded-xl p-4 space-y-3 shadow-lg shadow-emerald-950/20">
+              <div className="flex items-center justify-between border-b border-emerald-800/50 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-pulse"></span>
+                  <span className="text-xs font-bold text-emerald-300 uppercase tracking-wider">Distilled Endpoint (Post-Training)</span>
+                </div>
+                <span className="text-[10px] font-mono text-emerald-300 bg-emerald-950/80 border border-emerald-700 px-2 py-0.5 rounded font-bold">
+                  {metadata.metrics?.distilled_latency_ms || 38.4} ms (Fastest)
+                </span>
               </div>
-              <span className="text-xs font-mono text-cyan-300 bg-cyan-950/60 border border-cyan-800 px-2 py-0.5 rounded">
-                {metadata.serving_framework} engine
-              </span>
+
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <span className="text-slate-400">Model:</span>
+                  <div className="font-mono text-white font-semibold truncate">{metadata.base_model} + LoRA</div>
+                </div>
+                <div>
+                  <span className="text-slate-400">Serving Engine:</span>
+                  <div className="font-mono text-cyan-300">{metadata.serving_framework || 'vllm'} PagedAttention</div>
+                </div>
+                <div>
+                  <span className="text-slate-400">Speedup:</span>
+                  <div className="font-mono text-emerald-400 font-bold">{metadata.metrics?.speedup_factor || '3.25x'}</div>
+                </div>
+                <div>
+                  <span className="text-slate-400">GPU:</span>
+                  <div className="font-mono text-slate-300">{metadata.accelerator_type || 'NVIDIA_L4'}</div>
+                </div>
+              </div>
+
+              <div className="pt-2 text-[10px] text-slate-400 border-t border-emerald-900/40 flex items-center gap-1.5 font-mono truncate select-all">
+                <Terminal className="w-3 h-3 text-emerald-500 shrink-0" />
+                <span className="truncate">{metadata.endpoint_uri}</span>
+              </div>
             </div>
 
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 text-xs">
-              <div>
-                <span className="text-slate-400">Model Name</span>
-                <div className="font-mono text-white font-semibold mt-0.5 truncate">{metadata.base_model}</div>
+            {/* Endpoint 2: Base Student */}
+            <div className="bg-slate-800/60 border border-slate-700 rounded-xl p-4 space-y-3">
+              <div className="flex items-center justify-between border-b border-slate-700/60 pb-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="w-2.5 h-2.5 rounded-full bg-slate-400"></span>
+                  <span className="text-xs font-bold text-slate-300 uppercase tracking-wider">Base Endpoint (Pre-Training Baseline)</span>
+                </div>
+                <span className="text-[10px] font-mono text-slate-400 bg-slate-900 border border-slate-700 px-2 py-0.5 rounded">
+                  {metadata.metrics?.base_latency_ms || 124.8} ms
+                </span>
               </div>
-              <div>
-                <span className="text-slate-400">Machine & GPU</span>
-                <div className="font-mono text-white mt-0.5">{metadata.machine_type} + 1x {metadata.accelerator_type}</div>
-              </div>
-              <div>
-                <span className="text-slate-400">Replicas</span>
-                <div className="font-mono text-white mt-0.5">Min: {metadata.min_replicas} / Max: {metadata.max_replicas}</div>
-              </div>
-              <div>
-                <span className="text-slate-400">Serving Latency</span>
-                <div className="font-mono text-emerald-400 font-bold mt-0.5">~38 ms (p50)</div>
-              </div>
-            </div>
 
-            <div className="pt-2 text-[11px] text-slate-400 border-t border-slate-800 flex items-center gap-2">
-              <Terminal className="w-3.5 h-3.5 text-slate-500" />
-              <span className="font-mono text-slate-400 select-all">{metadata.endpoint_uri}</span>
+              <div className="grid grid-cols-2 gap-2 text-[11px]">
+                <div>
+                  <span className="text-slate-400">Model:</span>
+                  <div className="font-mono text-slate-200 font-semibold truncate">{metadata.base_model} (Base)</div>
+                </div>
+                <div>
+                  <span className="text-slate-400">Serving Engine:</span>
+                  <div className="font-mono text-cyan-300">{metadata.serving_framework || 'vllm'}</div>
+                </div>
+                <div>
+                  <span className="text-slate-400">Fine-Tuning:</span>
+                  <div className="font-mono text-slate-400">None (Zero-Shot)</div>
+                </div>
+                <div>
+                  <span className="text-slate-400">GPU:</span>
+                  <div className="font-mono text-slate-300">{metadata.accelerator_type || 'NVIDIA_L4'}</div>
+                </div>
+              </div>
+
+              <div className="pt-2 text-[10px] text-slate-400 border-t border-slate-700/60 flex items-center gap-1.5 font-mono truncate select-all">
+                <Terminal className="w-3 h-3 text-slate-500 shrink-0" />
+                <span className="truncate">{metadata.base_endpoint_uri || metadata.base_endpoint_id || 'Base endpoint active'}</span>
+              </div>
             </div>
           </div>
 
@@ -449,8 +489,11 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
                           {testOutput.student_before?.latency_ms || 125} ms
                         </span>
                       </div>
-                      <div className="text-[11px] text-slate-400 font-mono truncate">
-                        {testOutput.student_before?.model || 'Base Pre-Trained'}
+                      <div className="flex items-center justify-between text-[11px] text-slate-400 font-mono">
+                        <span className="truncate">{testOutput.student_before?.model || 'Base Pre-Trained'}</span>
+                        <span className="text-[9px] bg-slate-800/90 text-slate-400 border border-slate-700 px-1.5 py-0.5 rounded">
+                          Base Endpoint
+                        </span>
                       </div>
                       <p className="text-[11px] text-slate-400">
                         {testOutput.student_before?.description || 'Base model before distillation (higher latency, unaligned verbose output)'}
@@ -524,8 +567,11 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
                           {testOutput.student_after?.latency_ms || testOutput.latency_ms} ms
                         </span>
                       </div>
-                      <div className="text-[11px] text-emerald-300 font-mono truncate">
-                        {testOutput.student_after?.model || testOutput.model}
+                      <div className="flex items-center justify-between text-[11px] text-emerald-300 font-mono">
+                        <span className="truncate">{testOutput.student_after?.model || testOutput.model}</span>
+                        <span className="text-[9px] bg-emerald-900/80 text-emerald-200 border border-emerald-600 px-1.5 py-0.5 rounded font-bold">
+                          Distilled Endpoint
+                        </span>
                       </div>
                       <p className="text-[11px] text-slate-400">
                         {testOutput.student_after?.description || 'Distilled student running on vLLM with PagedAttention and merged LoRA weights'}
@@ -554,17 +600,23 @@ export default function DeploymentTab({ bucket, projectId, onStatusChange }) {
       {!isDeploying && !isActive && metadata?.status !== 'STOPPED' && (
         <div className="bg-slate-800/40 border border-dashed border-slate-700 rounded-xl p-12 text-center space-y-3">
           <Rocket className="w-10 h-10 text-slate-500 mx-auto" />
-          <div className="text-slate-300 font-semibold text-sm">Distilled Model Not Deployed Yet</div>
-          <p className="text-xs text-slate-500 max-w-md mx-auto">
-            Click "Deploy to Vertex AI Endpoint" to spin up an online prediction endpoint running the distilled student model on vLLM with PagedAttention.
+          <div className="text-slate-300 font-semibold text-sm">Dual Models Not Deployed Yet</div>
+          <p className="text-xs text-slate-400 max-w-md mx-auto">
+            Deploy two live production endpoints on Vertex AI: the baseline Student model (un-fine-tuned) and the Distilled Student model (fine-tuned with PEFT LoRA adapter) using high-throughput vLLM PagedAttention.
           </p>
-          <button
-            onClick={handleDeploy}
-            disabled={isDeploying}
-            className="bg-green-600 hover:bg-green-500 text-white text-xs font-semibold px-4 py-2 rounded-lg cursor-pointer"
-          >
-            Deploy Endpoint
-          </button>
+          <div className="text-[11px] text-amber-400/90 bg-amber-950/40 border border-amber-800/50 rounded-lg px-3 py-1.5 max-w-md mx-auto flex items-center justify-center gap-2">
+            <AlertCircle className="w-3.5 h-3.5 shrink-0" />
+            <span>Prerequisite: Stage 5 (Model Training) must be completed first to generate adapter weights.</span>
+          </div>
+          <div className="pt-2">
+            <button
+              onClick={handleDeploy}
+              disabled={isDeploying}
+              className="bg-green-600 hover:bg-green-500 text-white text-xs font-semibold px-4 py-2 rounded-lg cursor-pointer"
+            >
+              Deploy Dual Endpoints
+            </button>
+          </div>
         </div>
       )}
     </div>

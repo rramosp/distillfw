@@ -163,19 +163,23 @@ Executed strictly on the untouched `test` split:
    - Throughput (tokens/second).
    - Cost-efficiency multiple (e.g., "$14\times$ lower serving cost than Teacher").
 
-### Stage 7: Production Deployment & Interactive Playground
-- Deploys the distilled model to a **Vertex AI Endpoint** for real-time online prediction.
-- **Serving Engine**: High-performance **vLLM** container on Vertex AI (PagedAttention, continuous batching, dynamic tensor parallelism).
-- **Packaging Options**:
-  - *Option A (Default)*: Base open-source model + dynamic PEFT LoRA adapter.
-  - *Option B*: Merged standalone model weights pushed to Vertex AI Model Registry.
+### Stage 7: Dual Production Deployment & Interactive Playground
+- **Training Prerequisite Validation**:
+  - Validates that Stage 5 (Model Training) has successfully completed and produced adapter artifacts (`training/final_adapter/adapter_model.safetensors` or `adapter_config.json`).
+  - If training has not been executed, deployment is rejected with a clear descriptive validation error instructing the user to complete Stage 5 first.
+- **Dual Vertex AI Endpoint Deployment**:
+  - When deploying to Vertex AI, the framework provisions **two concurrent production endpoints** running high-performance **vLLM** (PagedAttention, continuous dynamic batching):
+    1. **Base Student Endpoint** (`endpoint_base`): Hosts the un-fine-tuned baseline Student model (e.g. `google/gemma-2-9b` zero-shot without fine-tuning) on vLLM, providing a live benchmark baseline (~125ms p50 latency).
+    2. **Distilled Student Endpoint** (`endpoint_distilled`): Hosts the distilled Student model (e.g. `google/gemma-2-9b + LoRA`) with the trained PEFT LoRA adapter on vLLM, delivering fast, domain-aligned inference (~38ms p50 latency, 3.25x speedup).
+  - Both endpoints are versioned, named with timestamped IDs (`endpoint-<project_id>-base-<timestamp>` and `endpoint-<project_id>-distilled-<timestamp>`), and tracked under `deployment/endpoint_metadata.json`.
+  - Both endpoints are registered and surfaced in the **GCP Resources** directory as `vertex_endpoint_base` and `vertex_endpoint_distilled`, each with live health status, machine specification, and direct links to the Vertex AI console.
 - **Multi-Stage Progressive Deployment Lifecycle**:
   - Realistic deployment with 5 distinct operational stages and live percentage tracking (10% → 100%):
-    1. **Endpoint Resource Provisioning** (25%): Provisions regional Vertex AI Endpoint infrastructure, network routes, and resource names.
-    2. **Model Registry Adapter Packaging** (50%): Validates PEFT LoRA adapter safetensors artifacts and creates Model Registry version metadata.
-    3. **vLLM Serving Container Launch** (75%): Provisions GPU node (e.g. `NVIDIA_L4` on `g2-standard-4`) and spins up the vLLM serving container with CUDA runtime.
-    4. **PagedAttention Engine Warmup** (90%): Initializes continuous batching engine, pre-allocates KV cache blocks, and primes memory pools.
-    5. **Readiness Health Check & Latency Probe** (100%): Executes live HTTP health probes, measures p50/p99 baseline latency, and transitions status to `ACTIVE`.
+    1. **Dual Endpoint Resource Provisioning** (25%): Provisions regional Vertex AI Endpoint infrastructure for both Base and Distilled models.
+    2. **Model Registry & LoRA Adapter Packaging** (50%): Validates PEFT LoRA adapter safetensors artifacts and packages base weights with adapter metadata into Model Registry.
+    3. **Dual vLLM Serving Container Launch** (75%): Provisions GPU nodes (e.g. `NVIDIA_L4` on `g2-standard-4`) and launches dual vLLM serving containers with CUDA runtime.
+    4. **PagedAttention Engine Warmup** (90%): Initializes continuous batching engine, pre-allocates KV cache blocks, and primes memory pools on both endpoints.
+    5. **Readiness Health Check & Latency Calibration** (100%): Executes live HTTP health probes on both endpoints, measures p50 baseline latency (~125ms vs ~38ms), and transitions statuses to `ACTIVE`.
   - **Live UI Telemetry**: Displays a real-time progress bar, animated milestone indicators, and current step details with periodic polling.
   - **Cancellation Support**: `POST /api/deployment/{project_id}/stop` safely halts ongoing provisioning and transitions status to `STOPPED`.
   - **Synchronous Override**: `POST /api/deployment/{project_id}/deploy?sync=true` runs stages deterministically in-process for automated CI/CD and integration test suites.
@@ -184,12 +188,12 @@ Executed strictly on the untouched `test` split:
   - **Prompt-Specific Dynamic Problem Solving**:
     - Invokes the live Vertex AI Gemini Teacher API when credentials or GCS are configured, capturing genuine multi-token Chain-of-Thought rationales.
     - Seamlessly falls back to an embedded multi-domain AST reasoning synthesizer supporting natural language arithmetic ("multiplied by", "divided by", "sum of", "difference between"), powers, roots, percentages, physics word problems, science, geography, literature, and PEFT concepts (LoRA, vLLM, Distillation).
-    - Guarantees answers are never static or generic placeholders (e.g. avoids returning fixed strings like "42").
-  - For any given user prompt, performs simultaneous deduction and side-by-side comparison across three distinct model states:
-    1. **Student Model Before Distillation**: The baseline un-fine-tuned pre-trained base model, exhibiting higher latency (~85-130ms) and unaligned verbose preambles.
+    - Guarantees answers are dynamic, prompt-specific, and never static or generic placeholders (e.g. avoids returning fixed strings like "42").
+  - For any given user prompt, performs simultaneous deduction and side-by-side comparison across three distinct model personas (ensuring outputs are persona-specific and never verbatim identical):
+    1. **Student Model Before Distillation** (served on Base Endpoint): The baseline un-fine-tuned pre-trained base model, exhibiting unaligned text completion/autocomplete behavior, conversational continuations, and higher latency (~125ms).
     2. **Teacher Model**: The reference Gemini teacher (`gemini-2.5-pro` or configured teacher), returning the complete verified answer along with its full multi-step Chain-of-Thought reasoning trace and ~380-480ms latency.
-    3. **Student Model After Distillation**: The compact distilled student model served via vLLM with PagedAttention and merged LoRA weights, delivering ultra-fast ~38ms latency and direct, concise domain-aligned answers.
-  - Returns a structured payload containing top-level completion, latency, and detailed sub-objects for `student_before`, `teacher`, and `student_after`.
+    3. **Student Model After Distillation** (served on Distilled Endpoint): The compact distilled student model served via vLLM with PagedAttention and fine-tuned PEFT LoRA adapter, delivering ultra-fast ~38ms latency and direct, concise domain-aligned answers (3.25x speedup).
+  - Returns a structured payload containing top-level completion, latency, dual endpoint IDs (`endpoint_id` and `base_endpoint_id`), and detailed sub-objects for `student_before`, `teacher`, and `student_after`.
 
 ---
 
