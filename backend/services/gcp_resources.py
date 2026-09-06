@@ -250,29 +250,76 @@ class GCPResourcesService:
             }
         })
 
-        # 5. Vertex AI Model Registry
-        model_name = f"distillfw-{project_id}-model"
-        if has_adapter or (dep_data and dep_data.get("status") == "ACTIVE"):
-            model_status = "REGISTERED"
-            model_detail = "Distilled model weights and PEFT LoRA adapter ready in Model Registry"
+        # 5a. Vertex AI Model Registry (Base Student Model)
+        base_model_id = (dep_data and dep_data.get("base_model_id"))
+        base_model_name = f"distillfw-{project_id}-base"
+        if base_model_id:
+            base_model_status = "REGISTERED"
+            base_model_detail = f"Base Student model registered in Vertex AI Model Registry ({student_model})"
+            base_model_console = f"https://console.cloud.google.com/vertex-ai/models/{base_model_id}?project={gcp_project}"
+            base_model_uri = f"projects/{gcp_project}/locations/{region}/models/{base_model_id}"
+        elif dep_data and dep_data.get("status") == "ACTIVE":
+            base_model_status = "REGISTERED"
+            base_model_detail = f"Base model registered in Model Registry ({student_model})"
+            base_model_console = f"https://console.cloud.google.com/vertex-ai/models?project={gcp_project}"
+            base_model_uri = f"projects/{gcp_project}/locations/{region}/models/{base_model_name}"
         else:
-            model_status = "READY_TO_REGISTER"
-            model_detail = "Awaiting model training completion to register fine-tuned model"
+            base_model_status = "READY_TO_REGISTER"
+            base_model_detail = f"Ready to register baseline student model ({student_model}) on deployment"
+            base_model_console = f"https://console.cloud.google.com/vertex-ai/models?project={gcp_project}"
+            base_model_uri = f"projects/{gcp_project}/locations/{region}/models/{base_model_name}"
 
         resources.append({
-            "id": "vertex_model",
-            "name": model_name,
+            "id": "vertex_model_base",
+            "name": f"{base_model_name} ({base_model_id})" if base_model_id else base_model_name,
             "service": "Vertex AI Model Registry",
-            "type": "Model Version",
+            "type": "Model Version (Base)",
             "category": "Models",
-            "role": "Versioned repository of distilled student weights and PEFT LoRA adapter lineage",
-            "status": model_status,
-            "status_detail": model_detail,
-            "resource_uri": f"projects/{gcp_project}/locations/{region}/models/{model_name}",
-            "console_url": f"https://console.cloud.google.com/vertex-ai/models?project={gcp_project}",
+            "role": "Baseline pre-trained Student model registered in Vertex AI Model Registry",
+            "status": base_model_status,
+            "status_detail": base_model_detail,
+            "resource_uri": base_model_uri,
+            "console_url": base_model_console,
             "metadata": {
                 "base_model": student_model,
-                "model_id": model_name
+                "model_id": base_model_id or base_model_name
+            }
+        })
+
+        # 5b. Vertex AI Model Registry (Distilled Student Model)
+        dist_model_id = (dep_data and dep_data.get("model_id"))
+        dist_model_name = f"distillfw-{project_id}-distilled"
+        if dist_model_id:
+            dist_model_status = "REGISTERED"
+            dist_model_detail = f"Distilled Student model with PEFT LoRA adapter registered in Vertex AI Model Registry ({student_model})"
+            dist_model_console = f"https://console.cloud.google.com/vertex-ai/models/{dist_model_id}?project={gcp_project}"
+            dist_model_uri = f"projects/{gcp_project}/locations/{region}/models/{dist_model_id}"
+        elif has_adapter or (dep_data and dep_data.get("status") == "ACTIVE"):
+            dist_model_status = "REGISTERED"
+            dist_model_detail = f"Distilled model weights and PEFT LoRA adapter registered in Model Registry"
+            dist_model_console = f"https://console.cloud.google.com/vertex-ai/models?project={gcp_project}"
+            dist_model_uri = f"projects/{gcp_project}/locations/{region}/models/{dist_model_name}"
+        else:
+            dist_model_status = "READY_TO_REGISTER"
+            dist_model_detail = "Awaiting model training completion to register fine-tuned distilled model"
+            dist_model_console = f"https://console.cloud.google.com/vertex-ai/models?project={gcp_project}"
+            dist_model_uri = f"projects/{gcp_project}/locations/{region}/models/{dist_model_name}"
+
+        resources.append({
+            "id": "vertex_model_distilled",
+            "name": f"{dist_model_name} ({dist_model_id})" if dist_model_id else dist_model_name,
+            "service": "Vertex AI Model Registry",
+            "type": "Model Version (Distilled)",
+            "category": "Models",
+            "role": "Versioned repository of distilled student weights and PEFT LoRA adapter lineage",
+            "status": dist_model_status,
+            "status_detail": dist_model_detail,
+            "resource_uri": dist_model_uri,
+            "console_url": dist_model_console,
+            "metadata": {
+                "base_model": student_model,
+                "model_id": dist_model_id or dist_model_name,
+                "adapter_uri": f"gs://{bucket_name}/{project_id}/training/final_adapter"
             }
         })
 

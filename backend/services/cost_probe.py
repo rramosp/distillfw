@@ -116,13 +116,30 @@ class CostProbeService:
         student_model = config.get("models", {}).get("student", {}).get("model_name_or_path", "google/gemma-2-9b")
         quantization = config.get("models", {}).get("student", {}).get("quantization", "4bit")
 
-        # Step time lookup or estimation
+        # Step time lookup or estimation based on selected student model
         key = (student_model, accelerator, quantization)
-        step_time_sec = PRICING["benchmark_step_times"].get(key, 0.75)
+        model_lower = student_model.lower()
+        if "1b" in model_lower:
+            default_step_time = 0.22
+            base_vram = 3.8
+        elif "2b" in model_lower:
+            default_step_time = 0.28
+            base_vram = 5.2
+        elif "3b" in model_lower:
+            default_step_time = 0.35
+            base_vram = 6.5
+        elif "27b" in model_lower:
+            default_step_time = 1.45
+            base_vram = 26.0
+        else:
+            default_step_time = 0.75
+            base_vram = 14.8
+
+        step_time_sec = PRICING["benchmark_step_times"].get(key, default_step_time)
         init_duration_sec = 240.0  # Container pull and PyTorch initialization time (~4 mins)
 
         # VRAM calculation and verification
-        peak_vram_gb = 14.8 if quantization == "4bit" else 22.5
+        peak_vram_gb = base_vram if quantization == "4bit" else round(base_vram * 1.6, 1)
         vram_limit_gb = 24.0 if "L4" in accelerator else (80.0 if "80GB" in accelerator else 16.0)
         has_oom_risk = peak_vram_gb >= vram_limit_gb
 

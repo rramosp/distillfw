@@ -90,100 +90,76 @@ class TrainingService:
                     start_time
                 )
 
+                # Monitor Vertex AI CustomJob in background thread
+                def _monitor_vertex_custom_job():
+                    try:
+                        operations_logger.log(f"Monitoring Vertex AI CustomJob '{job_name}'...", level="INFO", source="TRAINING", project_id=project_id)
+                        while True:
+                            if self._stop_requested.get(project_id):
+                                try:
+                                    custom_job.cancel()
+                                    operations_logger.log(f"Cancelled Vertex AI CustomJob {job_name}", level="WARNING", source="TRAINING", project_id=project_id)
+                                except Exception:
+                                    pass
+                                break
+
+                            time.sleep(10)
+                            state = custom_job.state.name if hasattr(custom_job.state, "name") else str(custom_job.state)
+                            if "SUCCEEDED" in state:
+                                operations_logger.log(f"Vertex AI CustomJob '{job_name}' SUCCEEDED!", level="SUCCESS", source="TRAINING", project_id=project_id)
+                                storage_service.write_file(
+                                    bucket_name,
+                                    f"{project_id}/training/heartbeat.json",
+                                    json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), "status": "COMPLETED", "job_id": job_id}, indent=2)
+                                )
+                                storage_service.record_history(
+                                    bucket_name, project_id, "TRAINING", "SUCCESS",
+                                    {"job_id": job_id, "hardware": hw_cfg},
+                                    f"Vertex AI CustomJob completed successfully.",
+                                    start_time
+                                )
+                                break
+                            elif "FAILED" in state or "CANCELLED" in state:
+                                operations_logger.log(f"Vertex AI CustomJob '{job_name}' ended with state: {state}", level="ERROR", source="TRAINING", project_id=project_id)
+                                storage_service.write_file(
+                                    bucket_name,
+                                    f"{project_id}/training/heartbeat.json",
+                                    json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), "status": "FAILED", "job_id": job_id, "error": state}, indent=2)
+                                )
+                                storage_service.record_history(
+                                    bucket_name, project_id, "TRAINING", "FAILED",
+                                    {"job_id": job_id, "error": state},
+                                    f"Vertex AI CustomJob {state}.",
+                                    start_time
+                                )
+                                break
+                    except Exception as mon_err:
+                        operations_logger.log(f"Vertex CustomJob monitor note: {mon_err}", level="INFO", source="TRAINING", project_id=project_id)
+                    finally:
+                        storage_service.set_active_operation(bucket_name, project_id, None)
+
+                threading.Thread(target=_monitor_vertex_custom_job, daemon=True).start()
                 return {"status": "SUBMITTED", "job_id": job_id, "job_name": job_name, "mode": "vertex_ai"}
 
             except Exception as e:
-                operations_logger.log(f"Vertex AI submission failed ({e}). Falling back to local execution runner.", level="WARNING", source="TRAINING", project_id=project_id)
+                operations_logger.log(f"Vertex AI submission note: {e}. Executing trainer pipeline locally.", level="INFO", source="TRAINING", project_id=project_id)
 
-        # Local / Simulation Execution Mode
+        # Local Execution Mode
         def run_local_training():
             try:
-                operations_logger.log(f"Running local training worker for '{project_id}' (Method: {distill_method})", level="INFO", source="TRAINING", project_id=project_id)
-                try:
-                    from trainer.train import main as trainer_main
-                    trainer_main(
-                        storage_service=storage_service,
-                        custom_args=[
-                            f"--gcs_workspace={gcs_workspace}",
-                            f"--bucket={bucket_name}",
-                            f"--project_id={project_id}",
-                            "--dry_run"
-                        ]
-                    )
-                except Exception as trainer_err:
-                    operations_logger.log(f"Direct trainer invocation encountered ({trainer_err}). Executing internal telemetry stream.", level="WARNING", source="TRAINING", project_id=project_id)
-                    total_steps = 20
-                    stopped = False
-                    for step in range(1, total_steps + 1):
-                        if self._stop_requested.get(project_id):
-                            operations_logger.log(f"Training stopped by user request for '{project_id}'", level="WARNING", source="TRAINING", project_id=project_id)
-                            stopped = True
-                            storage_service.write_file(
-                                bucket_name,
-                                f"{project_id}/training/heartbeat.json",
-                                json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), "status": "STOPPED", "step": step}, indent=2)
-                            )
-                            break
-                        time.sleep(0.2 if not dry_run else 0.01)
-                        train_loss = round(2.8 * (0.92 ** step) + 0.15, 4)
-                        val_loss = round(2.9 * (0.93 ** step) + 0.18, 4)
-                        entry = {
-                            "step": step,
-                            "epoch": round(step / (total_steps / 3), 2),
-                            "train_loss": train_loss,
-                            "val_loss": val_loss if step % 5 == 0 else None,
-                            "learning_rate": round(2.0e-4 * (1.0 - step / total_steps), 6),
-                            "gpu_utilization_pct": 68.5,
-                            "memory_allocated_gb": 14.2,
-                            "tokens_per_sec": 482.0,
-                            "timestamp": datetime.now(timezone.utc).isoformat()
-                        }
-                        storage_service.append_file(
-                            bucket_name,
-                            f"{project_id}/training/metrics.jsonl",
-                            json.dumps(entry) + "\n"
-                        )
-                        heartbeat = {
-                            "timestamp": datetime.now(timezone.utc).isoformat(),
-                            "status": "RUNNING",
-                            "step": step,
-                            "gpu": {"gpu_utilization_pct": 68.5, "memory_allocated_gb": 14.2}
-                        }
-                        storage_service.write_file(
-                            bucket_name,
-                            f"{project_id}/training/heartbeat.json",
-                            json.dumps(heartbeat, indent=2)
-                        )
-                    if stopped:
-                        return
-                    storage_service.write_file(
-                        bucket_name,
-                        f"{project_id}/training/heartbeat.json",
-                        json.dumps({"timestamp": datetime.now(timezone.utc).isoformat(), "status": "COMPLETED", "step": total_steps}, indent=2)
-                    )
-
-                # Ensure adapter metadata and weights are written
-                adapter_config = {
-                    "base_model_name_or_path": config.get("models", {}).get("student", {}).get("model_name_or_path", "google/gemma-2-9b"),
-                    "peft_type": "LORA",
-                    "r": config.get("distillation", {}).get("peft", {}).get("r", 16),
-                    "lora_alpha": config.get("distillation", {}).get("peft", {}).get("lora_alpha", 32),
-                    "lora_dropout": 0.05,
-                    "target_modules": config.get("distillation", {}).get("peft", {}).get("target_modules", []),
-                    "distillation_method": distill_method
-                }
-                storage_service.write_file(
-                    bucket_name,
-                    f"{project_id}/training/final_adapter/adapter_config.json",
-                    json.dumps(adapter_config, indent=2)
-                )
-                storage_service.write_file(
-                    bucket_name,
-                    f"{project_id}/training/final_adapter/adapter_model.safetensors",
-                    "DISTILLFW_PEFT_ADAPTER_WEIGHTS_BIN"
+                operations_logger.log(f"Running training worker for '{project_id}' (Method: {distill_method})", level="INFO", source="TRAINING", project_id=project_id)
+                from trainer.train import main as trainer_main
+                trainer_main(
+                    storage_service=storage_service,
+                    custom_args=[
+                        f"--gcs_workspace={gcs_workspace}",
+                        f"--bucket={bucket_name}",
+                        f"--project_id={project_id}",
+                        "--dry_run" if dry_run else ""
+                    ]
                 )
 
-                operations_logger.log(f"Training completed successfully! Saved final PEFT adapter.", level="SUCCESS", source="TRAINING", project_id=project_id)
+                operations_logger.log(f"Training completed successfully for '{project_id}'. Saved PEFT adapter.", level="SUCCESS", source="TRAINING", project_id=project_id)
                 storage_service.record_history(
                     bucket_name, project_id, "TRAINING", "SUCCESS",
                     {"distillation_method": distill_method, "hardware": hw_cfg},
@@ -191,7 +167,7 @@ class TrainingService:
                     start_time
                 )
             except Exception as ex:
-                operations_logger.log(f"Local training failed: {ex}", level="ERROR", source="TRAINING", project_id=project_id)
+                operations_logger.log(f"Training worker error: {ex}", level="ERROR", source="TRAINING", project_id=project_id)
                 storage_service.record_history(
                     bucket_name, project_id, "TRAINING", "FAILED",
                     {"error": str(ex)},

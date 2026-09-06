@@ -3,7 +3,7 @@
 import os
 import json
 import yaml
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Union
 from datetime import datetime, timezone
 from google.cloud import storage
 from google.auth.exceptions import DefaultCredentialsError
@@ -160,7 +160,7 @@ class StorageService:
                 return f.read()
         raise FileNotFoundError(f"File '{relative_path}' not found in bucket '{bucket_name}'")
 
-    def write_file(self, bucket_name: str, relative_path: str, content: str) -> None:
+    def write_file(self, bucket_name: str, relative_path: str, content: Union[str, bytes]) -> None:
         if self.use_gcs and self._gcs_client:
             try:
                 bucket = self._gcs_client.bucket(bucket_name)
@@ -172,8 +172,12 @@ class StorageService:
 
         local_file = self.get_local_path(bucket_name, relative_path)
         os.makedirs(os.path.dirname(local_file), exist_ok=True)
-        with open(local_file, "w", encoding="utf-8") as f:
-            f.write(content)
+        if isinstance(content, bytes):
+            with open(local_file, "wb") as f:
+                f.write(content)
+        else:
+            with open(local_file, "w", encoding="utf-8") as f:
+                f.write(content)
 
     def append_file(self, bucket_name: str, relative_path: str, content: str) -> None:
         existing = ""

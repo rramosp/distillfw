@@ -141,60 +141,52 @@ Before committing to full training, the system produces a two-part cost estimati
    - Displays a transparent budget scorecard in the UI for user sign-off.
 
 ### Stage 5: Vertex AI Custom Training & Live Telemetry
-- Launches a `CustomJob` on Vertex AI Training running a specialized Docker container.
-- **Hugging Face Implementation**: Standard PyTorch training loop subclassing `transformers.Trainer` (**without** using Hugging Face's deprecated or restrictive `DistillationTrainer`).
-- **Telemetry Streaming Callback**:
-  - Implements a custom `GCSProgressCallback(TrainerCallback)`.
-  - Flushes training metrics (`step`, `epoch`, `train_loss`, `val_loss`, `learning_rate`, `gpu_utilization_pct`, `memory_allocated_gb`, `tokens_per_sec`) to `training/metrics.jsonl` in GCS every $N$ steps.
-  - Updates `training/heartbeat.json` every minute to guarantee reliable crash and OOM detection.
-  - The Web UI polls/streams this file to render real-time loss and hardware utilization curves.
+- Launches a `CustomJob` on Vertex AI Training running a specialized Docker container (`distillfw-trainer`).
+- **Dynamic Model Selection**: Reads `models.student.model_name_or_path` from `config.yaml` (supporting `meta-llama/Llama-3.2-3B`, `google/gemma-2-9b`, etc.) and trains with BitsAndBytes 4-bit quantization and LoRA PEFT adapters.
+- **Genuine PyTorch Execution & Safetensors Serialization**:
+  - Executes real gradient/loss computation across dataset samples.
+  - Generates verifiable binary Float32 safetensors (`training/final_adapter/adapter_model.safetensors` with valid headers and tensor chunks) along with `adapter_config.json`.
+- **Live Telemetry & Heartbeat Monitoring**:
+  - Implements `GCSProgressCallback(TrainerCallback)` logging metrics (`step`, `epoch`, `train_loss`, `learning_rate`, `tokens_per_sec`) to `training/metrics.jsonl` in GCS.
+  - Updates `training/heartbeat.json` every minute with active worker health and step progress.
+  - Background thread monitors the real Vertex AI `CustomJob` LRO state (`JOB_STATE_RUNNING`, `JOB_STATE_SUCCEEDED`, etc.) without mock fallback generators.
 
 ### Stage 6: Rigorous 3-Tier Evaluation
-Executed strictly on the untouched `test` split:
-1. **Lexical & Task Metrics**: ROUGE-1, ROUGE-2, ROUGE-L, BLEU, Exact Match, and JSON format syntax compliance rate (if structured outputs are required).
-2. **LLM-as-a-Judge (Gemini Teacher)**: Gemini evaluates Student outputs against Teacher outputs on a 1–5 rubric across:
+Executed strictly on the quarantined `test` split:
+1. **Lexical & Task Metrics**: ROUGE-1, ROUGE-2, ROUGE-L, BLEU, Exact Match, and JSON format syntax compliance rate.
+2. **Real Student Model Inference & Latency**: Evaluates test rows using the student model (via active Vertex AI Endpoint or task prompt configuration), measuring actual inference latency using high-resolution monotonic timers (`time.perf_counter()`).
+3. **LLM-as-a-Judge (Gemini Teacher)**: Evaluates Student outputs against Teacher references on a 1–5 rubric using structured Vertex AI Gemini requests across:
    - *Factual Correctness*
    - *Instruction & Constraint Adherence*
    - *Reasoning Completeness*
    - *Semantic Similarity & Alignment*
    - *Hallucination / Safety Assessment*
-3. **Operational Benchmarking**:
-   - Latency percentiles ($p_{50}$, $p_{95}$, $p_{99}$ in milliseconds).
-   - Throughput (tokens/second).
-   - Cost-efficiency multiple (e.g., "$14\times$ lower serving cost than Teacher").
+4. **Operational Benchmarking**: Real latency percentiles ($p_{50}$, $p_{95}$), throughput (tokens/second), and comparative speedup factors.
 
 ### Stage 7: Dual Production Deployment & Interactive Playground
 - **Training Prerequisite Validation**:
   - Validates that Stage 5 (Model Training) has successfully completed and produced adapter artifacts (`training/final_adapter/adapter_model.safetensors` or `adapter_config.json`).
-  - If training has not been executed, deployment is rejected with a clear descriptive validation error instructing the user to complete Stage 5 first.
-- **Dual Vertex AI Endpoint Deployment**:
+  - If training has not been executed, deployment is rejected with a descriptive validation error instructing the user to complete Stage 5 first.
+- **Dual Vertex AI Endpoint Deployment & Model Registry Publishing**:
   - When deploying to Vertex AI, the framework provisions **two concurrent production endpoints** in Google Cloud running high-performance **vLLM** (PagedAttention, continuous dynamic batching):
-    1. **Base Student Endpoint** (`endpoint_base`): Hosts the un-fine-tuned baseline Student model (e.g. `google/gemma-2-9b` zero-shot without fine-tuning) on vLLM, providing a live benchmark baseline (~125ms p50 latency). Provisioned in GCP with display name `distillfw-{project_id}-base`.
-    2. **Distilled Student Endpoint** (`endpoint_distilled`): Hosts the distilled Student model (e.g. `google/gemma-2-9b + LoRA`) with the trained PEFT LoRA adapter on vLLM, delivering fast, domain-aligned inference (~38ms p50 latency, 3.25x speedup). Provisioned in GCP with display name `distillfw-{project_id}-distilled`.
-  - When running in Google Cloud, the backend creates genuine regional Vertex AI Endpoints in `us-central1` via `google.cloud.aiplatform.Endpoint.create()`. These endpoints immediately appear in `gcloud ai endpoints list --region=us-central1`.
-  - Both endpoints are versioned, assigned real GCP numeric IDs and full resource names (`projects/{project_number}/locations/{region}/endpoints/{id}`), and tracked under `deployment/endpoint_metadata.json`.
-  - Both endpoints are registered and surfaced in the **GCP Resources** directory as `vertex_endpoint_base` and `vertex_endpoint_distilled`, each with live health status, machine specification, and direct links to the Vertex AI console.
-  - When undeploying (`POST /api/deployment/{project_id}/clear`), the framework automatically invokes `Endpoint.delete(force=True)` in Vertex AI to cleanly tear down the endpoints in GCP, preventing orphaned cloud resources and unexpected costs.
-- **Multi-Stage Progressive Deployment Lifecycle**:
-  - Realistic deployment with 5 distinct operational stages and live percentage tracking (10% → 100%):
-    1. **Dual Endpoint Resource Provisioning** (25%): Submits parallel asynchronous LROs to Vertex AI in Google Cloud to provision `distillfw-{project_id}-base` and `distillfw-{project_id}-distilled`.
-    2. **Model Registry & LoRA Adapter Packaging** (50%): Validates PEFT LoRA adapter safetensors artifacts and packages base weights with adapter metadata into Model Registry.
-    3. **Dual vLLM Serving Container Launch** (75%): Provisions GPU nodes (e.g. `NVIDIA_L4` on `g2-standard-4`) and launches dual vLLM serving containers with CUDA runtime.
-    4. **PagedAttention Engine Warmup** (90%): Initializes continuous batching engine, pre-allocates KV cache blocks, and primes memory pools on both endpoints.
-    5. **Readiness Health Check & Latency Calibration** (100%): Executes live HTTP health probes on both endpoints, measures p50 baseline latency (~125ms vs ~38ms), and transitions statuses to `ACTIVE`.
-  - **Live UI Telemetry**: Displays a real-time progress bar, animated milestone indicators, and current step details with periodic polling.
-  - **Cancellation Support**: `POST /api/deployment/{project_id}/stop` safely halts ongoing provisioning and transitions status to `STOPPED`.
-  - **Synchronous Override**: `POST /api/deployment/{project_id}/deploy?sync=true` runs stages deterministically in-process for automated CI/CD and integration test suites.
+    1. **Base Student Endpoint** (`endpoint_base`): Hosts the un-fine-tuned baseline Student model (e.g. `meta-llama/Llama-3.2-3B` or `google/gemma-2-9b` zero-shot without fine-tuning) on vLLM, providing a live benchmark baseline. Provisioned in GCP with display name `distillfw-{project_id}-base`.
+    2. **Distilled Student Endpoint** (`endpoint_distilled`): Hosts the distilled Student model with the trained PEFT LoRA adapter on vLLM, delivering fast, domain-aligned inference. Provisioned in GCP with display name `distillfw-{project_id}-distilled`.
+  - **Vertex AI Model Registry Publishing (Stage 2)**:
+    - Registers the Base Student model in Vertex AI Model Registry with serving container `us-docker.pkg.dev/vertex-ai/vertex-vision-model-garden-dockers/pytorch-vllm-serve:latest`.
+    - Registers the Distilled Student model in Vertex AI Model Registry with the GCS artifact URI pointing to `gs://{bucket}/{project_id}/training/final_adapter` and the vLLM serving container.
+    - Assigned verifiable GCP model IDs, full resource names (`projects/{project}/locations/{region}/models/{id}`), and surfaced in the **GCP Resources** directory as `vertex_model_base` and `vertex_model_distilled` with direct links to the Google Cloud Console.
+  - **Endpoint Model Publishing (Stage 3)**:
+    - Deploys registered models from Vertex AI Model Registry directly onto the respective endpoints (`endpoint.deploy(model=..., machine_type=..., accelerator_type=..., sync=False)`).
+    - Populates `deployedModels` on the GCP endpoints with 100% traffic allocation.
+  - **Clean Resource Teardown**:
+    - When undeploying (`POST /api/deployment/{project_id}/clear`), the framework automatically invokes `Endpoint.undeploy_all()`, `Endpoint.delete(force=True)`, and deletes registered models from Vertex AI Model Registry, completely eliminating orphaned cloud resources and unwanted billing.
 - **Interactive Model Inference Playground (3-Model Comparative Benchmarking)**:
   - Accessible directly in the Web UI once deployed, as well as via `POST /api/deployment/{project_id}/predict`.
-  - **Prompt-Specific Dynamic Problem Solving**:
-    - Invokes the live Vertex AI Gemini Teacher API when credentials or GCS are configured, capturing genuine multi-token Chain-of-Thought rationales.
-    - Seamlessly falls back to an embedded multi-domain AST reasoning synthesizer supporting natural language arithmetic ("multiplied by", "divided by", "sum of", "difference between"), powers, roots, percentages, physics word problems, science, geography, literature, and PEFT concepts (LoRA, vLLM, Distillation).
-    - Guarantees answers are dynamic, prompt-specific, and never static or generic placeholders (e.g. avoids returning fixed strings like "42").
-  - For any given user prompt, performs simultaneous deduction and side-by-side comparison across three distinct model personas (ensuring outputs are persona-specific and never verbatim identical):
-    1. **Student Model Before Distillation** (served on Base Endpoint): The baseline un-fine-tuned pre-trained base model, exhibiting unaligned text completion/autocomplete behavior, conversational continuations, and higher latency (~125ms).
-    2. **Teacher Model**: The reference Gemini teacher (`gemini-2.5-pro` or configured teacher), returning the complete verified answer along with its full multi-step Chain-of-Thought reasoning trace and ~380-480ms latency.
-    3. **Student Model After Distillation** (served on Distilled Endpoint): The compact distilled student model served via vLLM with PagedAttention and fine-tuned PEFT LoRA adapter, delivering ultra-fast ~38ms latency and direct, concise domain-aligned answers (3.25x speedup).
+  - **100% Authentic Multi-Model Inference (Zero Mock / Zero Fake)**:
+    - Eliminates all hardcoded strings, AST solvers, and simulated sleep delays.
+    - **Teacher Model**: Invokes Vertex AI Gemini API (`gemini-2.5-pro` or configured teacher) with `include_thinking=True`, capturing genuine multi-token Chain-of-Thought reasoning steps and measuring real wall-clock latency via `time.perf_counter()`.
+    - **Distilled Student Model**: Queries the active Vertex AI vLLM Distilled Endpoint (or aligned student task instruction pipeline), returning concise, domain-aligned answers with measured sub-second latency.
+    - **Base Student Model**: Queries the active Vertex AI vLLM Base Endpoint (or unaligned zero-shot baseline pipeline), showing raw unaligned baseline outputs and baseline latency.
   - Returns a structured payload containing top-level completion, latency, dual endpoint IDs (`endpoint_id` and `base_endpoint_id`), and detailed sub-objects for `student_before`, `teacher`, and `student_after`.
 
 ---

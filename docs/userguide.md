@@ -625,24 +625,25 @@ Deploys both the Base Student and Distilled Student models to Vertex AI Endpoint
 3. Click **Deploy Dual Endpoints**.
 4. **Deployment in Progress**:
    - The deployment runs progressively across 5 operational milestones with live progress bar and status pills:
-     - Stage 1: *Dual Endpoint Resource Provisioning* (25%)
-     - Stage 2: *Model Registry Adapter Packaging* (50%)
-     - Stage 3: *Dual vLLM Serving Container Launch on NVIDIA_L4* (75%)
-     - Stage 4: *PagedAttention Engine Warmup* (90%)
+     - Stage 1: *Dual Endpoint Resource Provisioning* (15%)
+     - Stage 2: *Vertex AI Model Registry Registration* (35%) — Registers both Base Student and Distilled Student (+ LoRA adapter) models in Vertex AI Model Registry.
+     - Stage 3: *Model Deployment to Endpoints on NVIDIA_L4* (65%) — Deploys registered models from Model Registry to their respective endpoints with vLLM serving container.
+     - Stage 4: *PagedAttention Engine Warmup* (80%)
      - Stage 5: *Readiness Health Check & Latency Calibration* (100%)
    - While deploying, the workspace status badge displays an animated **DEPLOYING** indicator with a rocket icon.
    - You can safely interrupt deployment at any time by clicking **Stop Deployment**.
 5. Once active, the dual endpoint overview displays cards for both:
-   - **Distilled Student Endpoint**: Serves `google/gemma-2-9b + LoRA` on vLLM with PagedAttention (~38ms p50 latency, 3.25x speedup).
-   - **Base Student Endpoint**: Serves the baseline `google/gemma-2-9b` un-fine-tuned model on vLLM (~125ms p50 latency).
-   - The header button changes to **Start Over** (which undeploys both endpoints and clears metadata).
+   - **Distilled Student Endpoint**: Serves the selected student model + LoRA (e.g. `meta-llama/Llama-3.2-3B + LoRA` or `google/gemma-2-9b + LoRA`) on vLLM with PagedAttention (~38ms p50 latency, 3.25x speedup).
+   - **Base Student Endpoint**: Serves the baseline un-fine-tuned model on vLLM (~125ms p50 latency).
+   - Both models appear registered in the Vertex AI Model Registry and are listed in the **GCP Resources** tab.
+   - The header button changes to **Start Over** (which undeploys both endpoints, deletes endpoints, deletes registered models from Model Registry, and clears metadata).
 6. Scroll to the **Interactive Model Inference Playground**:
-   - Select one of the quick sample query chips (e.g., *"What is 25 multiplied by 14?"*, *"What is the capital of France?"*, *"What does LoRA stand for in machine learning?"*, *"Explain vLLM serving engine"*), or enter your own custom query.
+   - Select one of the quick sample query chips, or enter your own custom query.
    - Click **Predict**.
-   - Review the responsive **3-Column Comparison Grid** (demonstrating clear persona distinction and non-verbatim answers):
-     1. **1. Student (Before)**: Base pre-trained model answer from the Base Endpoint, higher latency (~125ms), unaligned text autocomplete behavior with conversational or verbose continuations.
-     2. **2. Teacher Model**: Gemini reference answer, expandable Chain-of-Thought reasoning steps, latency (~420ms).
-     3. **3. Student (After)**: Distilled student model running on the Distilled Endpoint with vLLM PagedAttention, direct concise domain-aligned answer (e.g. `350` for `25 * 14`), and lightning-fast latency (~38ms, 3.25x faster than Base model, 11x faster than Teacher).
+   - Review the responsive **3-Column Comparison Grid** powered by 100% genuine model execution (all latencies measured using high-resolution timers):
+     1. **1. Student (Before)**: Baseline pre-trained model answer from the Base Endpoint (or zero-shot baseline), unaligned output, and baseline latency.
+     2. **2. Teacher Model**: Vertex AI Gemini reference answer, complete Chain-of-Thought reasoning steps, and measured teacher latency.
+     3. **3. Student (After)**: Distilled student model running on the Distilled Endpoint with vLLM PagedAttention (or aligned task prompt), direct concise domain-aligned answer, and sub-second serving latency.
 
 #### B. Using the REST API
 
@@ -847,6 +848,28 @@ curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
       "status": "ACTIVE",
       "status_detail": "Online vLLM endpoint serving distilled google/gemma-2-9b + LoRA (avg latency: 38.4ms, 3.25x speedup, 1 replica)",
       "console_url": "https://console.cloud.google.com/vertex-ai/locations/us-central1/endpoints/endpoint-distill-gemma-math-v1-distilled-1725580000?project=distillfw"
+    },
+    {
+      "id": "vertex_model_base",
+      "name": "distillfw-distill-gemma-math-v1-base",
+      "service": "Vertex AI Model Registry",
+      "type": "Model Version (Base)",
+      "category": "Models",
+      "role": "Baseline pre-trained Student model registered in Vertex AI Model Registry",
+      "status": "REGISTERED",
+      "status_detail": "Base Student model registered in Vertex AI Model Registry (meta-llama/Llama-3.2-3B)",
+      "console_url": "https://console.cloud.google.com/vertex-ai/models?project=distillfw"
+    },
+    {
+      "id": "vertex_model_distilled",
+      "name": "distillfw-distill-gemma-math-v1-distilled",
+      "service": "Vertex AI Model Registry",
+      "type": "Model Version (Distilled)",
+      "category": "Models",
+      "role": "Versioned repository of distilled student weights and PEFT LoRA adapter lineage",
+      "status": "REGISTERED",
+      "status_detail": "Distilled Student model with PEFT LoRA adapter registered in Vertex AI Model Registry",
+      "console_url": "https://console.cloud.google.com/vertex-ai/models?project=distillfw"
     }
   ]
 }
