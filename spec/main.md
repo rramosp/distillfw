@@ -168,14 +168,16 @@ Executed strictly on the untouched `test` split:
   - Validates that Stage 5 (Model Training) has successfully completed and produced adapter artifacts (`training/final_adapter/adapter_model.safetensors` or `adapter_config.json`).
   - If training has not been executed, deployment is rejected with a clear descriptive validation error instructing the user to complete Stage 5 first.
 - **Dual Vertex AI Endpoint Deployment**:
-  - When deploying to Vertex AI, the framework provisions **two concurrent production endpoints** running high-performance **vLLM** (PagedAttention, continuous dynamic batching):
-    1. **Base Student Endpoint** (`endpoint_base`): Hosts the un-fine-tuned baseline Student model (e.g. `google/gemma-2-9b` zero-shot without fine-tuning) on vLLM, providing a live benchmark baseline (~125ms p50 latency).
-    2. **Distilled Student Endpoint** (`endpoint_distilled`): Hosts the distilled Student model (e.g. `google/gemma-2-9b + LoRA`) with the trained PEFT LoRA adapter on vLLM, delivering fast, domain-aligned inference (~38ms p50 latency, 3.25x speedup).
-  - Both endpoints are versioned, named with timestamped IDs (`endpoint-<project_id>-base-<timestamp>` and `endpoint-<project_id>-distilled-<timestamp>`), and tracked under `deployment/endpoint_metadata.json`.
+  - When deploying to Vertex AI, the framework provisions **two concurrent production endpoints** in Google Cloud running high-performance **vLLM** (PagedAttention, continuous dynamic batching):
+    1. **Base Student Endpoint** (`endpoint_base`): Hosts the un-fine-tuned baseline Student model (e.g. `google/gemma-2-9b` zero-shot without fine-tuning) on vLLM, providing a live benchmark baseline (~125ms p50 latency). Provisioned in GCP with display name `distillfw-{project_id}-base`.
+    2. **Distilled Student Endpoint** (`endpoint_distilled`): Hosts the distilled Student model (e.g. `google/gemma-2-9b + LoRA`) with the trained PEFT LoRA adapter on vLLM, delivering fast, domain-aligned inference (~38ms p50 latency, 3.25x speedup). Provisioned in GCP with display name `distillfw-{project_id}-distilled`.
+  - When running in Google Cloud, the backend creates genuine regional Vertex AI Endpoints in `us-central1` via `google.cloud.aiplatform.Endpoint.create()`. These endpoints immediately appear in `gcloud ai endpoints list --region=us-central1`.
+  - Both endpoints are versioned, assigned real GCP numeric IDs and full resource names (`projects/{project_number}/locations/{region}/endpoints/{id}`), and tracked under `deployment/endpoint_metadata.json`.
   - Both endpoints are registered and surfaced in the **GCP Resources** directory as `vertex_endpoint_base` and `vertex_endpoint_distilled`, each with live health status, machine specification, and direct links to the Vertex AI console.
+  - When undeploying (`POST /api/deployment/{project_id}/clear`), the framework automatically invokes `Endpoint.delete(force=True)` in Vertex AI to cleanly tear down the endpoints in GCP, preventing orphaned cloud resources and unexpected costs.
 - **Multi-Stage Progressive Deployment Lifecycle**:
   - Realistic deployment with 5 distinct operational stages and live percentage tracking (10% → 100%):
-    1. **Dual Endpoint Resource Provisioning** (25%): Provisions regional Vertex AI Endpoint infrastructure for both Base and Distilled models.
+    1. **Dual Endpoint Resource Provisioning** (25%): Submits parallel asynchronous LROs to Vertex AI in Google Cloud to provision `distillfw-{project_id}-base` and `distillfw-{project_id}-distilled`.
     2. **Model Registry & LoRA Adapter Packaging** (50%): Validates PEFT LoRA adapter safetensors artifacts and packages base weights with adapter metadata into Model Registry.
     3. **Dual vLLM Serving Container Launch** (75%): Provisions GPU nodes (e.g. `NVIDIA_L4` on `g2-standard-4`) and launches dual vLLM serving containers with CUDA runtime.
     4. **PagedAttention Engine Warmup** (90%): Initializes continuous batching engine, pre-allocates KV cache blocks, and primes memory pools on both endpoints.

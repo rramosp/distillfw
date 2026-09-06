@@ -702,6 +702,33 @@ curl -X POST "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/deployment/d
   -H "Authorization: Bearer $(gcloud auth print-identity-token)"
 ```
 
+##### Verifying Deployed Endpoints with `gcloud`:
+
+Once deployed in Google Cloud, the two live Vertex AI Endpoints are listed directly via the Google Cloud SDK:
+
+```bash
+# List all regional Vertex AI endpoints in us-central1
+gcloud ai endpoints list --region=us-central1
+```
+
+Example output:
+```
+ENDPOINT_ID          DISPLAY_NAME
+4583420323256336384  distillfw-distill-gemma-math-v1-distilled
+7866544451609427968  distillfw-distill-gemma-math-v1-base
+```
+
+You can describe either endpoint to view its full Google Cloud resource metadata:
+```bash
+# Describe Distilled Student Endpoint
+gcloud ai endpoints describe 4583420323256336384 --region=us-central1
+
+# Describe Base Student Baseline Endpoint
+gcloud ai endpoints describe 7866544451609427968 --region=us-central1
+```
+
+When you click **Start Over** in the UI or call `POST /api/deployment/{project_id}/clear`, the framework automatically deletes both endpoints from Vertex AI via `Endpoint.delete(force=True)`.
+
 ---
 
 ## 4. Monitoring & Telemetry

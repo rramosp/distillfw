@@ -185,28 +185,31 @@ class GCPResourcesService:
 
             base_status = "INITIALIZING"
             base_detail = f"Base endpoint provisioning in progress ({dep_data.get('current_step', 'Provisioning...')}, {dep_data.get('progress_pct', 20)}%)"
-            base_console = f"https://console.cloud.google.com/vertex-ai/online-prediction/endpoints?project={gcp_project}"
+            base_console = f"https://console.cloud.google.com/vertex-ai/locations/{region}/endpoints/{base_id}?project={gcp_project}" if str(base_id).isdigit() else f"https://console.cloud.google.com/vertex-ai/online-prediction/endpoints?project={gcp_project}"
 
             dist_status = "INITIALIZING"
             dist_detail = f"Distilled endpoint provisioning in progress ({dep_data.get('current_step', 'Provisioning...')}, {dep_data.get('progress_pct', 20)}%)"
-            dist_console = f"https://console.cloud.google.com/vertex-ai/online-prediction/endpoints?project={gcp_project}"
+            dist_console = f"https://console.cloud.google.com/vertex-ai/locations/{region}/endpoints/{distilled_id}?project={gcp_project}" if str(distilled_id).isdigit() else f"https://console.cloud.google.com/vertex-ai/online-prediction/endpoints?project={gcp_project}"
         else:
-            base_id = f"distillfw-{project_id}-base-endpoint"
+            base_id = f"distillfw-{project_id}-base"
             base_uri = f"projects/{gcp_project}/locations/{region}/endpoints/{base_id}"
             base_status = "NOT_DEPLOYED"
             base_detail = "Base student prediction endpoint not currently provisioned"
             base_console = f"https://console.cloud.google.com/vertex-ai/online-prediction/endpoints?project={gcp_project}"
 
-            distilled_id = f"distillfw-{project_id}-distilled-endpoint"
+            distilled_id = f"distillfw-{project_id}-distilled"
             distilled_uri = f"projects/{gcp_project}/locations/{region}/endpoints/{distilled_id}"
             dist_status = "NOT_DEPLOYED"
             dist_detail = "Distilled student prediction endpoint not currently provisioned"
             dist_console = f"https://console.cloud.google.com/vertex-ai/online-prediction/endpoints?project={gcp_project}"
 
+        base_display_name = (dep_data and dep_data.get("endpoint_base", {}).get("display_name")) or f"distillfw-{project_id}-base"
+        dist_display_name = (dep_data and dep_data.get("endpoint_distilled", {}).get("display_name")) or f"distillfw-{project_id}-distilled"
+
         # 4a. Base Student Endpoint
         resources.append({
             "id": "vertex_endpoint_base",
-            "name": base_id,
+            "name": f"{base_display_name} ({base_id})" if str(base_id).isdigit() else base_display_name,
             "service": "Vertex AI Prediction",
             "type": "Prediction Endpoint (Base Student)",
             "category": "Serving",
@@ -220,6 +223,7 @@ class GCPResourcesService:
                 "model_type": "base_student",
                 "accelerator_type": accelerator_type,
                 "endpoint_id": base_id,
+                "display_name": base_display_name,
                 "model": student_model
             }
         })
@@ -227,7 +231,7 @@ class GCPResourcesService:
         # 4b. Distilled Student Endpoint
         resources.append({
             "id": "vertex_endpoint_distilled",
-            "name": distilled_id,
+            "name": f"{dist_display_name} ({distilled_id})" if str(distilled_id).isdigit() else dist_display_name,
             "service": "Vertex AI Prediction",
             "type": "Prediction Endpoint (Distilled Student)",
             "category": "Serving",
@@ -241,6 +245,7 @@ class GCPResourcesService:
                 "model_type": "distilled_student",
                 "accelerator_type": accelerator_type,
                 "endpoint_id": distilled_id,
+                "display_name": dist_display_name,
                 "model": f"{student_model} + LoRA"
             }
         })
