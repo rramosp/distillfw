@@ -13,11 +13,12 @@ import CostTab from './components/CostTab';
 import TrainingTab from './components/TrainingTab';
 import EvaluationTab from './components/EvaluationTab';
 import DeploymentTab from './components/DeploymentTab';
+import GcpResourcesTab from './components/GcpResourcesTab';
 import HistoryTab from './components/HistoryTab';
 
 import { 
   Layers, Settings2, Database, Sparkles, 
-  Calculator, Cpu, Award, Rocket, History 
+  Calculator, Cpu, Award, Rocket, Cloud, History 
 } from 'lucide-react';
 
 const TABS = [
@@ -29,8 +30,10 @@ const TABS = [
   { id: 'training', label: '5. Model training', icon: Cpu },
   { id: 'evaluation', label: '6. 3-Tier Eval', icon: Award },
   { id: 'deployment', label: '7. vLLM Deploy', icon: Rocket },
+  { id: 'resources', label: 'GCP Resources', icon: Cloud },
   { id: 'history', label: 'Audit History', icon: History },
 ];
+
 
 export default function App() {
   const [buckets, setBuckets] = useState(['distillfw-workspaces']);
@@ -229,6 +232,12 @@ export default function App() {
                 onStatusChange={loadStatus}
               />
             )}
+            {activeTab === 'resources' && (
+              <GcpResourcesTab
+                bucket={selectedBucket}
+                projectId={selectedProject}
+              />
+            )}
             {activeTab === 'history' && (
               <HistoryTab
                 bucket={selectedBucket}
@@ -236,6 +245,7 @@ export default function App() {
               />
             )}
           </>
+
         )}
       </main>
 

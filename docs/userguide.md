@@ -32,7 +32,9 @@ When you open the Web UI at `http://localhost:8080`:
    - `5. Model training`: Launch custom training, stream real-time loss and GPU curves, and trigger via bottom "Start Distillation Training" button.
    - `6. 3-Tier Eval`: Benchmark lexical, Gemini judge, and latency percentiles.
    - `7. vLLM Deploy`: Deploy model and test queries in the 3-model comparative playground.
+   - `GCP Resources`: Directory of all Google Cloud Platform resources provisioned for the workspace, live operational statuses, and direct links to Google Cloud Console management interfaces.
    - `Audit History`: Chronological execution log from `history.json`.
+
 3. **Universal Task Action Lifecycle**:
    - **Running State**: As soon as any process starts (dataset split, teacher inference, cost probe, training, eval, deployment), action buttons are disabled and a prominent **Stop** button is displayed to allow immediate cancellation.
    - **Completed State**: Once a task finishes, its full results (data tables, artifacts, metrics, curves, or endpoints) are displayed, and action buttons switch to **"Start Over"**. Clicking "Start Over" calls the backend `/clear` endpoint to purge the stage's artifacts and reset state cleanly.
@@ -706,3 +708,93 @@ curl -s "http://localhost:8080/api/workspaces/distill-gemma-math-v1/history?buck
 curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
   "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/workspaces/distill-gemma-math-v1/history?bucket=distillfw-workspaces" | jq .
 ```
+
+### 4.3. GCP Resources Management & Console Navigation
+
+The **GCP Resources** tab presents a centralized directory of all Google Cloud resources configured or provisioned for the selected workspace, accompanied by live statuses and direct one-click links to their Google Cloud Console management interfaces.
+
+#### A. Using the Web UI
+1. Click the **GCP Resources** tab in the main navigation.
+2. The workspace header displays:
+   - **GCP Project**: Active project ID (e.g. `distillfw`) with a direct link to the GCP Console project dashboard.
+   - **Region**: Active deployment region (e.g. `us-central1`).
+   - **Workspace Path**: `gs://<bucket>/<project-id>/` with a one-click copy button.
+   - **Summary Scorecards**: Counters for Total Resources, Active & Serving, In Progress, and Pending/Standby.
+3. Use the **Search bar** or **Category pills** (*Storage*, *Custom Training*, *Online Serving*, *Vertex Models*, *Artifact Registry*, *IAM & Security*, *Cloud Run Compute*, *Cloud Logging*) to filter resources.
+4. Each resource row displays:
+   - Resource name and URI (with quick-copy button).
+   - GCP Service badge and resource type.
+   - Operational role in the distillation lifecycle.
+   - Real-time status badge (`ACTIVE`, `RUNNING`, `COMPLETED`, `SERVING`, `STREAMING`, `CONFIGURED`, `AVAILABLE`, `NOT_DEPLOYED`).
+   - Detailed status description (e.g. active training step, serving replica count, average latency).
+   - **"Open in GCP Console ↗"** button opening the corresponding GCP Console management interface in a new browser tab.
+5. Click **Refresh Statuses** to query the latest state across Google Cloud Storage, Vertex AI, and Cloud Run.
+
+#### B. Using the REST API
+
+Fetch the complete structured JSON representation of all GCP resources for a workspace:
+
+##### Localhost (`http://localhost:8080`):
+```bash
+curl -s "http://localhost:8080/api/workspaces/distill-gemma-math-v1/resources?bucket=distillfw-workspaces" | jq .
+```
+
+##### Deployed in GCP (Cloud Run with `Authorization` Header):
+```bash
+curl -s -H "Authorization: Bearer $(gcloud auth print-identity-token)" \
+  "https://distillfw-backend-bxddgrrqlq-uc.a.run.app/api/workspaces/distill-gemma-math-v1/resources?bucket=distillfw-workspaces" | jq .
+```
+
+**Example JSON Response:**
+```json
+{
+  "project_id": "distill-gemma-math-v1",
+  "bucket": "distillfw-workspaces",
+  "gcp_project_id": "distillfw",
+  "region": "us-central1",
+  "summary": {
+    "total_resources": 12,
+    "active_count": 10,
+    "in_progress_count": 0,
+    "ready_count": 1,
+    "not_deployed_count": 1
+  },
+  "resources": [
+    {
+      "id": "gcs_workspace",
+      "name": "gs://distillfw-workspaces/distill-gemma-math-v1/",
+      "service": "Cloud Storage",
+      "type": "Bucket Directory Prefix",
+      "category": "Storage",
+      "role": "Isolated workspace storage for configs, datasets, checkpoints, logs, and evaluation reports",
+      "status": "ACTIVE",
+      "status_detail": "Project workspace prefix under gs://distillfw-workspaces",
+      "resource_uri": "gs://distillfw-workspaces/distill-gemma-math-v1/",
+      "console_url": "https://console.cloud.google.com/storage/browser/distillfw-workspaces/distill-gemma-math-v1?project=distillfw"
+    },
+    {
+      "id": "vertex_custom_job",
+      "name": "distillfw-train-distill-gemma-math-v1",
+      "service": "Vertex AI Training",
+      "type": "CustomJob",
+      "category": "Training",
+      "role": "Executes parameter-efficient fine-tuning (PEFT/QLoRA) on NVIDIA_L4 GPU",
+      "status": "COMPLETED",
+      "status_detail": "Custom training completed; final PEFT adapter weights saved",
+      "console_url": "https://console.cloud.google.com/vertex-ai/training/custom-jobs?project=distillfw"
+    },
+    {
+      "id": "vertex_endpoint",
+      "name": "endpoint-distill-gemma-math-v1",
+      "service": "Vertex AI Prediction",
+      "type": "Prediction Endpoint",
+      "category": "Serving",
+      "role": "Real-time serving endpoint hosting high-throughput vLLM engine with PagedAttention",
+      "status": "ACTIVE",
+      "status_detail": "Online vLLM endpoint serving google/gemma-2-9b (avg latency: 38.4ms, 1 replica)",
+      "console_url": "https://console.cloud.google.com/vertex-ai/locations/us-central1/endpoints/endpoint-distill-gemma-math-v1?project=distillfw"
+    }
+  ]
+}
+```
+

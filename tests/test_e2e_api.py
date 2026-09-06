@@ -193,3 +193,41 @@ def test_history_and_logs():
     logs = logs_res.json()
     assert len(logs) > 0
 
+
+def test_workspace_gcp_resources():
+    res = client.get(f"/api/workspaces/{PROJECT}/resources?bucket={BUCKET}")
+    assert res.status_code == 200
+    data = res.json()
+
+    assert data["project_id"] == PROJECT
+    assert data["bucket"] == BUCKET
+    assert "gcp_project_id" in data
+    assert "region" in data
+    assert "summary" in data
+    assert data["summary"]["total_resources"] >= 10
+
+    resources = data["resources"]
+    assert len(resources) >= 10
+
+    resource_services = [r["service"] for r in resources]
+    assert "Cloud Storage" in resource_services
+    assert "Vertex AI Training" in resource_services
+    assert "Vertex AI Prediction" in resource_services
+    assert "Vertex AI Model Registry" in resource_services
+    assert "Vertex AI Gemini API" in resource_services
+    assert "Artifact Registry" in resource_services
+    assert "Cloud IAM" in resource_services
+    assert "Cloud Run" in resource_services
+    assert "Cloud Logging" in resource_services
+
+    for r in resources:
+        assert "id" in r
+        assert "name" in r
+        assert "service" in r
+        assert "status" in r
+        assert "status_detail" in r
+        assert "console_url" in r
+        assert r["console_url"].startswith("https://console.cloud.google.com/")
+        assert f"project={data['gcp_project_id']}" in r["console_url"]
+
+

@@ -5,6 +5,7 @@ from typing import Dict, Any, List, Optional
 from pydantic import BaseModel
 
 from backend.services.storage import storage_service
+from backend.services.gcp_resources import gcp_resources_service
 from backend.core.config import settings
 from backend.core.models import ProjectStatus
 
@@ -49,3 +50,12 @@ def get_project_history(
     bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
 ):
     return storage_service.get_history(bucket, project_id)
+
+
+@router.get("/{project_id}/resources")
+def get_project_resources(
+    project_id: str,
+    bucket: str = Query(default_factory=lambda: settings.DEFAULT_BUCKET)
+):
+    return gcp_resources_service.get_workspace_resources(bucket, project_id)
+

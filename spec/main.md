@@ -472,8 +472,24 @@ The platform is deployed to GCP via Terraform modules under `terraform/` orchest
     1. **Student Model (Before Distillation)**: Base pre-trained baseline model output and latency.
     2. **Teacher Model**: Reference Gemini response with expandable Chain-of-Thought reasoning steps and latency.
     3. **Student Model (After Distillation)**: Distilled student output served on vLLM with PagedAttention and merged LoRA weights, demonstrating ultra-fast latency (~38ms) and domain alignment.
+- **GCP Resources Tab & Management Console Integration**:
+  - A dedicated tab titled **"GCP Resources"** displays all Google Cloud Platform managed resources associated with the selected workspace.
+  - Presents each resource alongside its live operational status (e.g. `ACTIVE`, `SERVING`, `RUNNING`, `COMPLETED`, `NOT_DEPLOYED`, `CONFIGURED`, `AVAILABLE`, `STREAMING`) and descriptive status details.
+  - Includes prominent direct links (`Open in GCP Console ↗`) to the Google Cloud Console management interface for each resource:
+    - **Google Cloud Storage (GCS) Workspace & Bucket**: Direct browser links to `gs://<bucket>/<project-id>/` and `gs://<bucket>`.
+    - **Vertex AI Custom Training Job**: Direct console link to specific CustomJob or Custom Jobs dashboard.
+    - **Vertex AI Online Prediction Serving Endpoint**: Direct console link to active vLLM serving endpoint or endpoints registry.
+    - **Vertex AI Model Registry**: Direct console link to distilled student model version registry.
+    - **Vertex AI Gemini API Teacher Model**: Direct link to Vertex AI Model Garden and Multimodal Prompt Studio.
+    - **Google Artifact Registry**: Direct link to Docker container repository and custom training images.
+    - **Cloud IAM Service Accounts**: Direct link to IAM service accounts (`distillfw-trainer-sa`, `distillfw-backend-sa`).
+    - **Cloud Run Compute Services**: Direct links to `distillfw-backend` and `distillfw-frontend` service details.
+    - **Cloud Logging**: Direct link to Logs Explorer pre-filtered for workspace container revisions and ML jobs.
+  - Provides a workspace overview header featuring the active GCP project ID (with link to GCP Console Dashboard), region, GCS workspace path with quick-copy button, summary metrics counters, real-time search filtering, and service category tabs.
+  - Backed by the REST API endpoint `GET /api/workspaces/{project_id}/resources?bucket=...`.
 
 ## 10. Documentation
+
 
 The platform includes detailed documentation under `docs/`:
 - **`docs/install.md`**: Detailed installation instructions in GCP, covering prerequisites, required IAM roles and APIs, automated deployment via `deploy.sh` (including `--dry-run` and `--reset`), manual Terraform provisioning, Docker image builds, and local verification.

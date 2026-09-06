@@ -31,6 +31,12 @@ export async function fetchProjectHistory(bucket, project_id) {
   return res.json();
 }
 
+export async function fetchProjectResources(bucket, project_id) {
+  const res = await fetch(`${API_BASE}/workspaces/${encodeURIComponent(project_id)}/resources?bucket=${encodeURIComponent(bucket)}`);
+  return res.json();
+}
+
+
 export async function fetchConfig(bucket, project_id) {
   const res = await fetch(`${API_BASE}/config/${encodeURIComponent(project_id)}?bucket=${encodeURIComponent(bucket)}`);
   return res.json();
