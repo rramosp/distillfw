@@ -103,6 +103,10 @@ def test_parallel_inference_preserves_order(tmp_path, monkeypatch):
     from backend.services.storage import storage_service
     monkeypatch.setattr("backend.core.config.settings.LOCAL_STORAGE_ROOT", str(tmp_path))
     monkeypatch.setattr("backend.core.config.settings.STORAGE_MODE", "local")
+    monkeypatch.setattr("backend.core.config.settings.GCP_PROJECT_ID", "")
+    monkeypatch.delenv("GCP_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     storage_service.use_gcs = False
 
     bucket = "test-bucket"
@@ -140,6 +144,10 @@ def test_sequential_inference(tmp_path, monkeypatch):
     from backend.services.storage import storage_service
     monkeypatch.setattr("backend.core.config.settings.LOCAL_STORAGE_ROOT", str(tmp_path))
     monkeypatch.setattr("backend.core.config.settings.STORAGE_MODE", "local")
+    monkeypatch.setattr("backend.core.config.settings.GCP_PROJECT_ID", "")
+    monkeypatch.delenv("GCP_PROJECT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLOUD_PROJECT", raising=False)
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     storage_service.use_gcs = False
 
     bucket = "test-bucket"
