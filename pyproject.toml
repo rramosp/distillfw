@@ -1,0 +1,52 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "distillfw"
+version = "0.1.0"
+description = "Gemini-to-Gemma LLM Distillation Framework on GCP with Stateless GCS Task Tracking"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [
+    { name = "Raul Ramos" }
+]
+dependencies = [
+    "pydantic>=2.5.0",
+    "pyyaml>=6.0.1",
+    "click>=8.1.7",
+    "rich>=13.7.0",
+    "numpy>=1.26.0",
+    "pandas>=2.1.0",
+    "pyarrow>=14.0.0",
+    "torch>=2.2.0,<2.8.0",
+    "transformers>=4.46.0",
+    "trl>=0.12.0",
+    "peft>=0.13.0",
+    "accelerate>=0.34.0",
+    "datasets>=2.19.0",
+    "google-genai>=1.0.0",
+    "google-cloud-storage>=2.16.0",
+    "google-cloud-aiplatform>=1.70.0",
+]
+
+[project.optional-dependencies]
+vllm = [
+    "vllm>=0.6.0",
+]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "jupyter>=1.0.0",
+]
+
+[project.scripts]
+distillfw = "distillfw.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
