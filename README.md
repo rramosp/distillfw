@@ -4,6 +4,8 @@
 
 It is designed for teams currently using Gemini for a well-defined task who want to **reduce inference cost**, **guarantee low latency (TTFT / TPOT)**, and **serve models on controlled infrastructure** (Vertex AI Endpoints / vLLM).
 
+![status](imgs/distillfw-status.png)
+
 ---
 
 ## Key Features
