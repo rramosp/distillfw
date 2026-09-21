@@ -1,0 +1,74 @@
+task_id: support-ticket-classification-v1
+description: Distill Gemini 3.5 Flash into Gemma 3 4B for multi-label support ticket classification, urgency scoring, and queue routing.
+
+gcp:
+  project_id: distillfw
+  location: us-central1
+  bucket_name: distillfw-storage
+  tasks_prefix: tasks
+
+teacher:
+  model_id: gemini-3.5-flash
+  location: global
+  temperature: 0.1
+  top_p: 0.95
+  max_output_tokens: 512
+  candidate_count: 1
+  response_logprobs: false
+  thinking_budget: null
+  system_instruction: >-
+    You are an enterprise technical support triage classifier. For each incoming support ticket,
+    output a valid JSON object containing: category, subcategory, severity (P0/P1/P2/P3),
+    routing_queue, requires_escalation (boolean), and a one-sentence summary.
+  shard_size: 50
+
+student:
+  model_id: google/gemma-3-4b-it
+  source: huggingface
+  peft_method: lora
+  lora_r: 16
+  lora_alpha: 32
+  lora_dropout: 0.05
+  max_seq_length: 1024
+  dtype: bfloat16
+
+formatting:
+  prompt_format: chat
+  dataset_representation: text
+  train_split_ratio: 0.80
+  val_split_ratio: 0.10
+  test_split_ratio: 0.10
+  seed: 42
+
+training:
+  paradigm: off_policy
+  algorithm: sft_seqkd
+  execution_mode: vertex_custom_job
+  num_epochs: 3
+  per_device_batch_size: 4
+  gradient_accumulation_steps: 4
+  learning_rate: 0.0002
+  temperature: 1.0
+  skew_alpha: 0.1
+  vertex_machine_type: g2-standard-48
+  vertex_accelerator_type: NVIDIA_L4
+  vertex_accelerator_count: 4
+
+evaluation:
+  metrics:
+    - rouge
+    - bleu
+    - exact_match
+    - llm_judge
+    - latency
+  judge_model_id: gemini-3.5-flash
+  judge_model_location: global
+  max_eval_samples: 50
+
+deployment:
+  merge_lora: true
+  machine_type: g2-standard-12
+  accelerator_type: NVIDIA_L4
+  accelerator_count: 1
+  min_replica_count: 1
+  max_replica_count: 3

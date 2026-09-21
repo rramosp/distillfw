@@ -107,6 +107,10 @@ class DatasetFormatter:
 
     def run(self) -> dict[str, Any]:
         """Execute Stage 2 formatting and persist train/val/test splits to `<task_uri>/02_formatted_dataset/`."""
+        from distillfw.logging_utils import get_logger
+
+        logger = get_logger("stages.formatter")
+        self.workspace.verify_upstream_stages_completed(StageName.DATASET_FORMATTER)
         config = self.workspace.load_config()
         self.workspace.mark_stage_running(StageName.DATASET_FORMATTER)
 
@@ -125,11 +129,20 @@ class DatasetFormatter:
                     f"No raw teacher records found in {self.workspace.raw_dataset_dir_uri}"
                 )
 
+            logger.info(
+                "Loaded %d raw teacher record(s) from %d shard file(s) | prompt_format=%s | representation=%s",
+                len(raw_records),
+                len([u for u in shard_uris if u.endswith(".jsonl")]),
+                config.formatting.prompt_format.value,
+                config.formatting.dataset_representation.value,
+            )
+
             tokenizer = None
             if config.formatting.dataset_representation in (
                 DatasetRepresentation.TOKENS,
                 DatasetRepresentation.SPARSE_LOGPROBS,
             ):
+                logger.info("Loading tokenizer for student model '%s'...", config.student.model_id)
                 tokenizer = self._get_tokenizer(config.student.model_id)
 
             formatted = [
@@ -148,31 +161,48 @@ class DatasetFormatter:
             rng.shuffle(formatted)
 
             n = len(formatted)
-            n_train = max(1, int(n * config.formatting.train_split_ratio))
-            n_val = int(n * config.formatting.val_split_ratio)
-
-            splits = {
-                "train": formatted[:n_train],
-                "val": formatted[n_train : n_train + n_val],
-                "test": formatted[n_train + n_val :],
-            }
+            if n >= 2:
+                n_test = max(1, min(n - 1, int(round(n * config.formatting.test_split_ratio))))
+                remaining = n - n_test
+                if config.formatting.val_split_ratio > 0 and remaining >= 2:
+                    n_val = min(
+                        remaining - 1,
+                        int(round(n * config.formatting.val_split_ratio)),
+                    )
+                else:
+                    n_val = 0
+                n_train = remaining - n_val
+                splits = {
+                    "train": formatted[:n_train],
+                    "val": formatted[n_train : n_train + n_val],
+                    "test": formatted[n_train + n_val :],
+                }
+            else:
+                splits = {
+                    "train": formatted[:1],
+                    "val": [],
+                    "test": formatted[:1],
+                }
 
             split_uris: dict[str, str] = {}
             with tempfile.TemporaryDirectory() as tmp_dir:
                 for split_name, rows in splits.items():
                     if not rows:
                         continue
+                    rows_with_split = [{**row, "split": split_name} for row in rows]
                     local_parquet = Path(tmp_dir) / f"{split_name}.parquet"
-                    pd.DataFrame(rows).to_parquet(local_parquet, index=False)
+                    pd.DataFrame(rows_with_split).to_parquet(local_parquet, index=False)
                     dest_uri = f"{self.workspace.formatted_dataset_dir_uri}/{split_name}.parquet"
                     self.workspace.storage.upload_file(local_parquet, dest_uri)
                     split_uris[split_name] = dest_uri
+                    logger.info("Uploaded split '%s' (%d rows) -> %s", split_name, len(rows), dest_uri)
 
             artifacts = {
                 "formatted_dataset_dir_uri": self.workspace.formatted_dataset_dir_uri,
                 "split_uris": split_uris,
                 "split_counts": {k: len(v) for k, v in splits.items()},
             }
+            logger.info("Dataset formatting finished: split_counts=%s", artifacts["split_counts"])
             self.workspace.mark_stage_completed(StageName.DATASET_FORMATTER, artifacts=artifacts)
             return artifacts
         except Exception as exc:

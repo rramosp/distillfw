@@ -57,10 +57,19 @@ class DatasetGenerator:
         teacher_cfg: Any,
         gcp_cfg: Any,
     ) -> dict[str, Any]:
+        from distillfw.gcp.retry import call_with_exponential_backoff
+
         prompt_text = prompt_record.get("prompt") or prompt_record.get("input") or str(prompt_record)
 
         if self.teacher_callable is not None:
-            result = self.teacher_callable(prompt_text, prompt_record)
+            result = call_with_exponential_backoff(
+                lambda: self.teacher_callable(prompt_text, prompt_record),
+                max_retries=teacher_cfg.max_retries,
+                initial_delay=teacher_cfg.initial_retry_delay_seconds,
+                max_delay=teacher_cfg.max_retry_delay_seconds,
+                multiplier=teacher_cfg.backoff_multiplier,
+                operation_name=f"Teacher inference ({teacher_cfg.model_id})",
+            )
             return {
                 "prompt": prompt_text,
                 "completion": result["completion"],
@@ -74,7 +83,12 @@ class DatasetGenerator:
         from google import genai
         from google.genai import types
 
-        client = genai.Client(vertexai=True, project=gcp_cfg.project_id, location=gcp_cfg.location)
+        default_location = gcp_cfg.location if gcp_cfg is not None else "us-central1"
+        teacher_location = teacher_cfg.location or default_location
+        project_id = gcp_cfg.project_id if gcp_cfg is not None else None
+        client = genai.Client(
+            vertexai=True, project=project_id, location=teacher_location
+        )
 
         gen_config_kwargs: dict[str, Any] = {
             "temperature": teacher_cfg.temperature,
@@ -92,10 +106,16 @@ class DatasetGenerator:
                 thinking_budget=teacher_cfg.thinking_budget
             )
 
-        response = client.models.generate_content(
-            model=teacher_cfg.model_id,
-            contents=prompt_text,
-            config=types.GenerateContentConfig(**gen_config_kwargs),
+        response = call_with_exponential_backoff(
+            lambda: client.chats.create(
+                model=teacher_cfg.model_id,
+                config=types.GenerateContentConfig(**gen_config_kwargs),
+            ).send_message(message=prompt_text),
+            max_retries=teacher_cfg.max_retries,
+            initial_delay=teacher_cfg.initial_retry_delay_seconds,
+            max_delay=teacher_cfg.max_retry_delay_seconds,
+            multiplier=teacher_cfg.backoff_multiplier,
+            operation_name=f"Stage 1 Gemini inference ({teacher_cfg.model_id})",
         )
 
         thought_text: str | None = None
@@ -136,6 +156,9 @@ class DatasetGenerator:
 
     def run(self) -> dict[str, Any]:
         """Execute Stage 1 with automatic shard-level GCS checkpointing and resumption."""
+        from distillfw.logging_utils import get_logger
+
+        logger = get_logger("stages.generator")
         config = self.workspace.load_config()
         state = self.workspace.load_state()
         stage_rec = state.stages[StageName.DATASET_GENERATOR]
@@ -163,14 +186,32 @@ class DatasetGenerator:
             all_prompts = self._load_prompts(input_uri)
             shard_size = config.teacher.shard_size
             total_shards = (len(all_prompts) + shard_size - 1) // shard_size
+            default_loc = config.gcp.location if config.gcp is not None else "us-central1"
+            logger.info(
+                "Loaded %d prompt(s) from %s | teacher=%s (location=%s) | shard_size=%d | total_shards=%d | already_completed=%d",
+                len(all_prompts),
+                input_uri,
+                config.teacher.model_id,
+                config.teacher.location or default_loc,
+                shard_size,
+                total_shards,
+                len(completed_shards),
+            )
 
             for shard_idx in range(total_shards):
                 if shard_idx in completed_shards:
+                    logger.info("Skipping already completed shard %d/%d", shard_idx + 1, total_shards)
                     continue
 
                 shard_prompts = all_prompts[
                     shard_idx * shard_size : (shard_idx + 1) * shard_size
                 ]
+                logger.info(
+                    "Generating shard %d/%d (%d prompts)...",
+                    shard_idx + 1,
+                    total_shards,
+                    len(shard_prompts),
+                )
                 shard_records = [
                     self._call_gemini_single(p, config.teacher, config.gcp)
                     for p in shard_prompts
@@ -179,6 +220,13 @@ class DatasetGenerator:
                 shard_uri = f"{self.workspace.raw_dataset_dir_uri}/shard_{shard_idx:04d}.jsonl"
                 payload = "\n".join(json.dumps(r) for r in shard_records) + "\n"
                 self.workspace.storage.write_text(shard_uri, payload)
+                logger.info(
+                    "Completed shard %d/%d (%d records) -> %s",
+                    shard_idx + 1,
+                    total_shards,
+                    len(shard_records),
+                    shard_uri,
+                )
 
                 completed_shards.append(shard_idx)
                 if shard_uri not in shard_uris:
@@ -199,6 +247,12 @@ class DatasetGenerator:
                 "shard_uris": shard_uris,
                 "num_records": len(all_prompts),
             }
+            logger.info(
+                "Dataset generation finished: %d total records across %d shards in %s",
+                len(all_prompts),
+                len(shard_uris),
+                self.workspace.raw_dataset_dir_uri,
+            )
             self.workspace.mark_stage_completed(StageName.DATASET_GENERATOR, artifacts=artifacts)
             return artifacts
         except Exception as exc:

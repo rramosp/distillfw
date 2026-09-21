@@ -20,23 +20,24 @@ def parse_gcs_uri(uri: str) -> tuple[str, str]:
 
 
 class StorageBackend:
-    """Unified URI storage client supporting `gs://` and local emulation.
+    """Unified URI storage client supporting `gs://` buckets and local filesystem paths.
 
-    If `DISTILLFW_LOCAL_GCS_ROOT` is set in the environment (or `local_root` is passed),
-    `gs://<bucket>/<path>` URIs are transparently mapped to `<local_root>/<bucket>/<path>`.
-    This guarantees 100% identical URI semantics across production GCP environments,
-    local development, CI tests, and sample notebooks.
+    - `gs://<bucket>/<path>` URIs use Google Cloud Storage (`google.cloud.storage`).
+    - Local filesystem paths (`<storage_root>/<task_id>/...` from `local:` config) use
+      atomic local filesystem operations directly.
     """
 
     def __init__(self, project_id: str | None = None, local_root: str | Path | None = None) -> None:
         self.project_id = project_id
-        env_local = os.environ.get("DISTILLFW_LOCAL_GCS_ROOT")
-        self.local_root: Path | None = (
-            Path(local_root)
-            if local_root is not None
-            else (Path(env_local) if env_local else None)
-        )
+        self.local_root: Path | None = Path(local_root) if local_root is not None else None
         self._gcs_client = None
+
+    @staticmethod
+    def _is_gcs_uri(uri: str) -> bool:
+        return uri.startswith("gs://")
+
+    def _use_local_fs(self, uri: str) -> bool:
+        return self.local_root is not None or not self._is_gcs_uri(uri)
 
     @property
     def is_local_emulation(self) -> bool:
@@ -49,14 +50,27 @@ class StorageBackend:
             self._gcs_client = storage.Client(project=self.project_id)
         return self._gcs_client
 
+    def get_bucket_location(self, bucket_name: str) -> str | None:
+        """Return the GCS location (e.g., 'US-CENTRAL1' or 'US') of `bucket_name`, or None in local emulation."""
+        if self.is_local_emulation:
+            return None
+        bucket = self._get_gcs_client().lookup_bucket(bucket_name)
+        if bucket is None:
+            raise FileNotFoundError(
+                f"GCS bucket 'gs://{bucket_name}' does not exist or is not accessible."
+            )
+        return str(bucket.location)
+
     def _resolve_local_path(self, uri: str) -> Path:
-        assert self.local_root is not None
-        bucket, blob_path = parse_gcs_uri(uri)
-        return self.local_root / bucket / blob_path
+        if self._is_gcs_uri(uri):
+            assert self.local_root is not None
+            bucket, blob_path = parse_gcs_uri(uri)
+            return self.local_root / bucket / blob_path
+        return Path(uri)
 
     def exists(self, uri: str) -> bool:
         """Check whether an object or directory exists at `uri`."""
-        if self.is_local_emulation:
+        if self._use_local_fs(uri):
             return self._resolve_local_path(uri).exists()
         bucket_name, blob_path = parse_gcs_uri(uri)
         bucket = self._get_gcs_client().bucket(bucket_name)
@@ -70,7 +84,7 @@ class StorageBackend:
 
     def read_text(self, uri: str, encoding: str = "utf-8") -> str:
         """Read UTF-8 text from `uri`."""
-        if self.is_local_emulation:
+        if self._use_local_fs(uri):
             return self._resolve_local_path(uri).read_text(encoding=encoding)
         bucket_name, blob_path = parse_gcs_uri(uri)
         blob = self._get_gcs_client().bucket(bucket_name).blob(blob_path)
@@ -78,7 +92,7 @@ class StorageBackend:
 
     def write_text(self, uri: str, content: str, encoding: str = "utf-8") -> None:
         """Atomically write text content to `uri`."""
-        if self.is_local_emulation:
+        if self._use_local_fs(uri):
             target = self._resolve_local_path(uri)
             target.parent.mkdir(parents=True, exist_ok=True)
             with tempfile.NamedTemporaryFile(
@@ -106,7 +120,7 @@ class StorageBackend:
     def upload_file(self, local_path: str | Path, uri: str) -> None:
         """Upload a local file to `uri`."""
         src = Path(local_path)
-        if self.is_local_emulation:
+        if self._use_local_fs(uri):
             dst = self._resolve_local_path(uri)
             dst.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(src, dst)
@@ -119,7 +133,7 @@ class StorageBackend:
         """Download a single object from `uri` to `local_path`."""
         dst = Path(local_path)
         dst.parent.mkdir(parents=True, exist_ok=True)
-        if self.is_local_emulation:
+        if self._use_local_fs(uri):
             src = self._resolve_local_path(uri)
             shutil.copy2(src, dst)
             return dst
@@ -153,21 +167,58 @@ class StorageBackend:
 
     def list_uris(self, uri_prefix: str) -> list[str]:
         """List all object URIs under `uri_prefix`."""
-        bucket_name, prefix = parse_gcs_uri(uri_prefix)
-        clean_prefix = prefix.rstrip("/") + "/" if prefix else ""
-        if self.is_local_emulation:
-            root = self._resolve_local_path(f"gs://{bucket_name}/{clean_prefix}")
+        if self._use_local_fs(uri_prefix):
+            if self._is_gcs_uri(uri_prefix):
+                bucket_name, prefix = parse_gcs_uri(uri_prefix)
+                clean_prefix = prefix.rstrip("/") + "/" if prefix else ""
+                root = self._resolve_local_path(f"gs://{bucket_name}/{clean_prefix}")
+                if not root.exists():
+                    return []
+                results: list[str] = []
+                for p in sorted(root.rglob("*")):
+                    if p.is_file():
+                        rel = p.relative_to(self.local_root / bucket_name).as_posix()
+                        results.append(f"gs://{bucket_name}/{rel}")
+                return results
+            root = Path(uri_prefix)
             if not root.exists():
                 return []
-            results: list[str] = []
+            base_prefix = uri_prefix.rstrip("/")
+            results = []
             for p in sorted(root.rglob("*")):
                 if p.is_file():
-                    rel = p.relative_to(self.local_root / bucket_name).as_posix()
-                    results.append(f"gs://{bucket_name}/{rel}")
+                    rel = p.relative_to(root).as_posix()
+                    results.append(f"{base_prefix}/{rel}")
             return results
+        bucket_name, prefix = parse_gcs_uri(uri_prefix)
+        clean_prefix = prefix.rstrip("/") + "/" if prefix else ""
         bucket = self._get_gcs_client().bucket(bucket_name)
         return [
             f"gs://{bucket_name}/{blob.name}"
             for blob in bucket.list_blobs(prefix=clean_prefix)
             if not blob.name.endswith("/")
         ]
+
+    def delete_prefix(self, uri_prefix: str) -> int:
+        """Completely delete all objects and directory markers under `uri_prefix`."""
+        if self._use_local_fs(uri_prefix):
+            if self._is_gcs_uri(uri_prefix):
+                bucket_name, prefix = parse_gcs_uri(uri_prefix)
+                clean_prefix = prefix.rstrip("/") + "/" if prefix else ""
+                root = self._resolve_local_path(f"gs://{bucket_name}/{clean_prefix}")
+            else:
+                root = Path(uri_prefix)
+            if not root.exists():
+                return 0
+            count = sum(1 for p in root.rglob("*") if p.is_file())
+            shutil.rmtree(root)
+            return count
+        bucket_name, prefix = parse_gcs_uri(uri_prefix)
+        clean_prefix = prefix.rstrip("/") + "/" if prefix else ""
+        bucket = self._get_gcs_client().bucket(bucket_name)
+        blobs = list(bucket.list_blobs(prefix=clean_prefix))
+        for blob in blobs:
+            blob.delete()
+        return len(blobs)
+
+

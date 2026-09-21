@@ -14,9 +14,9 @@ from pydantic import BaseModel, Field, model_validator
 class TeacherModel(str, Enum):
     """Supported Gemini teacher models."""
 
-    GEMINI_2_5_PRO = "gemini-2.5-pro"
-    GEMINI_2_5_FLASH = "gemini-2.5-flash"
-    GEMINI_2_5_FLASH_LITE = "gemini-2.5-flash-lite"
+    GEMINI_3_5_PRO = "gemini-3.5-pro"
+    GEMINI_3_5_FLASH = "gemini-3.5-flash"
+    GEMINI_3_5_FLASH_LITE = "gemini-3.5-flash-lite"
     GEMINI_2_0_FLASH = "gemini-2.0-flash"
     GEMINI_2_0_FLASH_LITE = "gemini-2.0-flash-lite"
 
@@ -82,6 +82,18 @@ class TrainingAlgorithm(str, Enum):
     GRPO = "grpo"
 
 
+LOGPROBS_REQUIRED_ALGORITHMS: frozenset[TrainingAlgorithm] = frozenset(
+    {
+        TrainingAlgorithm.FORWARD_KL,
+        TrainingAlgorithm.REVERSE_KL,
+        TrainingAlgorithm.JSD,
+        TrainingAlgorithm.SKEW_KL,
+        TrainingAlgorithm.DISTILLM2,
+        TrainingAlgorithm.GKD,
+    }
+)
+
+
 class EvaluationMetric(str, Enum):
     """Supported evaluation metrics."""
 
@@ -113,12 +125,28 @@ class GCPConfig(BaseModel):
         return f"gs://{self.bucket_name}/{prefix}/{task_id}"
 
 
+class LocalConfig(BaseModel):
+    """Local filesystem storage configuration."""
+
+    storage_root: str = Field(
+        ..., description="Root folder where tasks are stored locally"
+    )
+
+    def get_task_uri(self, task_id: str) -> str:
+        root = self.storage_root.rstrip("/")
+        return f"{root}/{task_id}"
+
+
 class TeacherConfig(BaseModel):
     """Configuration for querying the Gemini teacher model (Stage 1)."""
 
     model_id: str = Field(
-        default=TeacherModel.GEMINI_2_5_FLASH.value,
+        default=TeacherModel.GEMINI_3_5_FLASH.value,
         description="Gemini model identifier on Vertex AI / Gemini API",
+    )
+    location: str | None = Field(
+        default=None,
+        description="Optional Vertex AI location for teacher inference (e.g., 'global'). Defaults to gcp.location if unset.",
     )
     temperature: float = Field(default=0.2, ge=0.0, le=2.0)
     top_p: float = Field(default=0.95, ge=0.0, le=1.0)
@@ -129,11 +157,11 @@ class TeacherConfig(BaseModel):
     response_logprobs: bool = Field(
         default=False, description="Whether to request token-level logprobs from Gemini"
     )
-    logprobs_top_k: int = Field(
-        default=20, ge=1, le=20, description="Number of top-k token logprobs to record per step"
+    logprobs_top_k: int | None = Field(
+        default=None, ge=1, le=20, description="Number of top-k token logprobs to record per step"
     )
     thinking_budget: int | None = Field(
-        default=None, description="Optional thinking token budget for Gemini 2.5 reasoning traces"
+        default=None, description="Optional thinking token budget for Gemini 3.5 reasoning traces"
     )
     system_instruction: str | None = Field(
         default=None, description="Optional system instruction prepended to teacher queries"
@@ -145,6 +173,26 @@ class TeacherConfig(BaseModel):
     concurrency: int = Field(default=16, ge=1, description="Max concurrent online API requests")
     shard_size: int = Field(
         default=250, ge=1, description="Number of prompts per persisted GCS shard for resumption"
+    )
+    max_retries: int = Field(
+        default=12,
+        ge=10,
+        description="Number of retries per Gemini API request on transient / 429 RESOURCE_EXHAUSTED errors (minimum 10)",
+    )
+    initial_retry_delay_seconds: float = Field(
+        default=2.0,
+        gt=0.0,
+        description="Initial wait time in seconds before the first retry",
+    )
+    max_retry_delay_seconds: float = Field(
+        default=120.0,
+        gt=0.0,
+        description="Maximum base wait time in seconds between retries",
+    )
+    backoff_multiplier: float = Field(
+        default=1.8,
+        gt=1.0,
+        description="Exponential backoff multiplier between consecutive retries",
     )
 
 
@@ -180,9 +228,9 @@ class FormatConfig(BaseModel):
 
     prompt_format: PromptFormat = Field(default=PromptFormat.CHAT)
     dataset_representation: DatasetRepresentation = Field(default=DatasetRepresentation.TEXT)
-    train_split_ratio: float = Field(default=0.85, gt=0.0, lt=1.0)
+    train_split_ratio: float = Field(default=0.80, gt=0.0, lt=1.0)
     val_split_ratio: float = Field(default=0.10, ge=0.0, lt=1.0)
-    test_split_ratio: float = Field(default=0.05, ge=0.0, lt=1.0)
+    test_split_ratio: float = Field(default=0.10, gt=0.0, lt=1.0)
     seed: int = Field(default=42)
 
     @model_validator(mode="after")
@@ -195,12 +243,13 @@ class FormatConfig(BaseModel):
         return self
 
 
+
 class TrainingConfig(BaseModel):
     """Configuration for single-node student training (Stage 3)."""
 
     paradigm: DistillationParadigm = Field(default=DistillationParadigm.OFF_POLICY)
     algorithm: TrainingAlgorithm = Field(default=TrainingAlgorithm.SFT_SEQKD)
-    execution_mode: Literal["local", "vertex_custom_job"] = Field(default="local")
+    execution_mode: Literal["local", "vertex_custom_job"] = Field(default="vertex_custom_job")
     num_epochs: int = Field(default=3, ge=1)
     per_device_batch_size: int = Field(default=4, ge=1)
     gradient_accumulation_steps: int = Field(default=4, ge=1)
@@ -246,7 +295,15 @@ class EvaluationConfig(BaseModel):
             EvaluationMetric.LATENCY,
         ]
     )
-    judge_model_id: str = Field(default=TeacherModel.GEMINI_2_5_PRO.value)
+    judge_model_id: str = Field(default=TeacherModel.GEMINI_3_5_PRO.value)
+    judge_model_location: str | None = Field(
+        default=None,
+        description="Optional Vertex AI location for judge inference (e.g., 'global' or 'us-central1'). Defaults to teacher.location or gcp.location.",
+    )
+    judge_location: str | None = Field(
+        default=None,
+        description="Alias for judge_model_location. Defaults to teacher.location or gcp.location.",
+    )
     max_eval_samples: int = Field(default=200, ge=1)
     use_vllm: bool = Field(default=False)
     json_schema: dict[str, Any] | None = Field(
@@ -255,6 +312,11 @@ class EvaluationConfig(BaseModel):
     teacher_cost_per_1m_input: float = Field(default=1.25)
     teacher_cost_per_1m_output: float = Field(default=10.00)
     student_hourly_gpu_cost: float = Field(default=1.20)
+
+    @property
+    def resolved_judge_location(self) -> str | None:
+        """Return judge_model_location if set, falling back to judge_location."""
+        return self.judge_model_location or self.judge_location
 
 
 class DeploymentConfig(BaseModel):
@@ -281,7 +343,10 @@ class DistillationConfig(BaseModel):
 
     task_id: str = Field(..., description="Unique identifier for the distillation task")
     description: str = Field(default="", description="Human-readable description of the task")
-    gcp: GCPConfig
+    gcp: GCPConfig | None = Field(default=None, description="GCP infrastructure configuration")
+    local: LocalConfig | None = Field(
+        default=None, description="Local filesystem storage configuration"
+    )
     teacher: TeacherConfig = Field(default_factory=TeacherConfig)
     student: StudentConfig = Field(default_factory=StudentConfig)
     formatting: FormatConfig = Field(default_factory=FormatConfig)
@@ -289,14 +354,29 @@ class DistillationConfig(BaseModel):
     evaluation: EvaluationConfig = Field(default_factory=EvaluationConfig)
     deployment: DeploymentConfig = Field(default_factory=DeploymentConfig)
 
+    @model_validator(mode="after")
+    def validate_gcp_or_local(self) -> DistillationConfig:
+        if (self.gcp is None) == (self.local is None):
+            raise ValueError(
+                "Exactly one of 'gcp' or 'local' must be specified in config.yaml, not both and not neither."
+            )
+        return self
+
     @property
     def task_uri(self) -> str:
-        """Canonical GCS URI for this task."""
-        return self.gcp.get_task_uri(self.task_id)
+        """Canonical task workspace URI (`gs://...` for GCP or `<storage_root>/<task_id>` for local)."""
+        if self.gcp is not None:
+            return self.gcp.get_task_uri(self.task_id)
+        assert self.local is not None
+        return self.local.get_task_uri(self.task_id)
 
     def to_yaml(self) -> str:
         """Serialize configuration to a YAML string."""
         data = self.model_dump(mode="json")
+        if data.get("gcp") is None:
+            data.pop("gcp", None)
+        if data.get("local") is None:
+            data.pop("local", None)
         return yaml.safe_dump(data, sort_keys=False)
 
     @classmethod
@@ -310,6 +390,29 @@ class DistillationConfig(BaseModel):
             raw = str(content)
         data = yaml.safe_load(raw)
         return cls.model_validate(data)
+
+    def validate_logprobs_compatibility(self) -> None:
+        """Validate that teacher logprobs settings match the selected training algorithm."""
+        algo = self.training.algorithm
+        needs_logprobs = algo in LOGPROBS_REQUIRED_ALGORITHMS
+
+        if not needs_logprobs:
+            if self.teacher.response_logprobs:
+                raise ValueError(
+                    f"Initialization error: training.algorithm='{algo.value}' does not use "
+                    f"teacher logprobs, so teacher.response_logprobs must be set to false."
+                )
+        else:
+            if not self.teacher.response_logprobs:
+                raise ValueError(
+                    f"Initialization error: training.algorithm='{algo.value}' requires "
+                    f"teacher logprobs, so teacher.response_logprobs must be set to true."
+                )
+            if self.teacher.logprobs_top_k is None:
+                raise ValueError(
+                    f"Initialization error: training.algorithm='{algo.value}' requires "
+                    f"teacher.logprobs_top_k to be explicitly configured when response_logprobs=true."
+                )
 
     def sha256(self) -> str:
         """Deterministic SHA-256 digest of the configuration."""

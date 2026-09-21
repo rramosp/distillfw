@@ -9,7 +9,7 @@ It is designed for teams currently using Gemini for a well-defined task who want
 ## Key Features
 
 - **5-Stage Modular Pipeline**:
-  1. `dataset_generator`: Queries Gemini teacher models (`gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-2.0-flash`, etc.) with your task prompts to collect high-quality completions, `<thought>` reasoning traces, and top-$k$ token `response_logprobs`.
+  1. `dataset_generator`: Queries Gemini teacher models (`gemini-3.5-pro`, `gemini-3.5-flash`, `gemini-3.5-flash-lite`, `gemini-2.0-flash`, etc.) with your task prompts to collect high-quality completions, `<thought>` reasoning traces, and top-$k$ token `response_logprobs`.
   2. `dataset_formatter`: Formats datasets into Gemma prompt templates (`pretrain`, `instruction`, `chat`, `reasoning`) and training representations (`text`, `tokens` with `-100` prompt masking, `sparse_logprobs`, `preference`).
   3. `model_trainer`: Distills into Gemma 2 / Gemma 3 student models (`1B`–`27B`) on a **single multi-GPU node** (local GPU VM or managed Vertex AI Custom Job) using SOTA off-policy and on-policy algorithms.
   4. `model_evaluator`: Benchmarks Teacher vs. Base Student vs. Distilled Student across lexical metrics (BLEU, ROUGE, Exact Match), LLM-as-a-Judge rubric & win rates, and latency/cost savings.
@@ -24,6 +24,7 @@ It is designed for teams currently using Gemini for a well-defined task who want
 ### 1.1 Environment Setup
 
 ```bash
+conda create --name distillfw python=3.13
 conda activate distillfw
 pip install -e ".[dev]"
 ```
@@ -33,20 +34,36 @@ pip install -e ".[dev]"
 Ensure your environment is authenticated with Google Cloud and the required APIs are enabled:
 
 ```bash
-gcloud auth application-default login
+gcloud config set billing/quota_project <YOUR_GCP_PROJECT_ID>
 gcloud config set project <YOUR_GCP_PROJECT_ID>
+gcloud auth application-default login
+
+# check GCP config
+gcloud config list
 
 gcloud services enable \
   aiplatform.googleapis.com \
   storage.googleapis.com
 ```
 
-> **Tip (Offline / Local Emulation Mode):**
-> You can run, test, and debug the entire pipeline locally without live GCS buckets by setting:
-> ```bash
-> export DISTILLFW_LOCAL_GCS_ROOT=/tmp/distillfw_gcs_emulator
+### 1.3 Create a Regional GCS Bucket
+
+Vertex AI Custom Training Jobs and Model Registry require your GCS bucket (`gcp.bucket_name`) to be a **single-region** bucket in the exact same region as `gcp.location` (e.g., `us-central1`). Multi-region buckets (such as default `us`) are rejected by Vertex AI Custom Jobs (`400 FailedPrecondition`).
+
+```bash
+gcloud storage buckets create gs://<YOUR_BUCKET_NAME> \
+  --project=<YOUR_GCP_PROJECT_ID> \
+  --location=us-central1 \
+  --uniform-bucket-level-access
+```
+
+> **Tip (Local Storage Mode):**
+> By default, all storage, training, and deployment run on GCP (`gcp:` section in `config.yaml`).
+> To store task workspaces on a local filesystem instead of GCS, replace the `gcp:` section in `config.yaml` with a `local:` section specifying `storage_root` (either `gcp` or `local` must be present in `config.yaml`, but not both):
+> ```yaml
+> local:
+>   storage_root: /path/to/local_tasks_root
 > ```
-> All `gs://<bucket>/<path>` URIs will transparently map to local files under `/tmp/distillfw_gcs_emulator/<bucket>/<path>`.
 
 ---
 
@@ -64,11 +81,11 @@ Provide a prompt dataset in `.jsonl`, `.parquet`, or `.csv` format containing a 
 
 ## 3. Configuration (`config.yaml`)
 
-Create a declarative `config.yaml` describing your teacher model, student model, prompt format, distillation algorithm, evaluation metrics, and serving infrastructure:
+Create a declarative `config.yaml` describing your teacher model, student model, prompt format, distillation algorithm, evaluation metrics, and serving infrastructure. Either `gcp` (default production mode) or `local` must be specified, but not both:
 
 ```yaml
 task_id: support-ticket-triage-v1
-description: Distill Gemini 2.5 Flash into Gemma 3 4B for support ticket triage
+description: Distill Gemini 3.5 Flash into Gemma 3 4B for support ticket triage
 
 gcp:
   project_id: my-gcp-project
@@ -76,15 +93,21 @@ gcp:
   bucket_name: my-distillfw-bucket
   tasks_prefix: tasks
 
+# Alternatively, to store task workspaces on the local filesystem instead of GCS,
+# omit `gcp:` and specify `local:` (either `gcp` or `local` must be present, not both):
+# local:
+#   storage_root: /tmp/distillfw_tasks
+
 teacher:
-  model_id: gemini-2.5-flash          # gemini-2.5-pro | gemini-2.5-flash | gemini-2.5-flash-lite | gemini-2.0-flash
+  model_id: gemini-3.5-flash          # gemini-3.5-pro | gemini-3.5-flash | gemini-3.5-flash-lite | gemini-2.0-flash
+  location: global                    # Optional override (e.g., global endpoint for Gemini 3.5); defaults to gcp.location
   temperature: 0.2
   top_p: 0.95
   max_output_tokens: 1024
   candidate_count: 1
   response_logprobs: true             # Enable top-k token logprobs for gray-box logit distillation
   logprobs_top_k: 20
-  thinking_budget: null               # Set integer budget (e.g., 1024) to capture Gemini 2.5 reasoning traces
+  thinking_budget: null               # Set integer budget (e.g., 1024) to capture Gemini 3.5 reasoning traces
   system_instruction: "You are an expert support triage assistant."
   shard_size: 250                     # Checkpoint progress to GCS every 250 prompts
 
@@ -109,7 +132,7 @@ formatting:
 training:
   paradigm: off_policy                # off_policy | on_policy | hybrid
   algorithm: skew_kl                  # sft_seqkd | forward_kl | reverse_kl | jsd | skew_kl | distillm2 | dpo | gkd | grpo
-  execution_mode: local               # local (single-node multi-GPU) | vertex_custom_job
+  execution_mode: vertex_custom_job   # vertex_custom_job (default on GCP) | local (single-node multi-GPU)
   num_epochs: 3
   per_device_batch_size: 4
   gradient_accumulation_steps: 4
@@ -128,7 +151,8 @@ evaluation:
     - exact_match
     - llm_judge
     - latency
-  judge_model_id: gemini-2.5-pro
+  judge_model_id: gemini-3.5-flash
+  judge_model_location: global
   max_eval_samples: 200
 
 deployment:
@@ -146,10 +170,13 @@ deployment:
 
 ### 4.1 Initialize a New Task Workspace on GCS
 
-Copies `config.yaml` and your input prompt dataset into an isolated GCS workspace (`gs://<bucket>/tasks/<task_id>/`) and initializes `task_state.json`:
+Copies `config.yaml` and your input prompt dataset into an isolated GCS workspace (`gs://<bucket>/tasks/<task_id>/`) and initializes `task_state.json`. If existing contents are found in the target GCS path, `distillfw init` prints a warning and exits without modifying anything unless `--force-reset` is specified:
 
 ```bash
 distillfw init --config config.yaml --prompts prompts.jsonl
+
+# Wipe existing contents in the target GCS workspace and re-initialize from scratch
+distillfw init --config config.yaml --prompts prompts.jsonl --force-reset
 ```
 
 ### 4.2 Run or Resume the Pipeline from Its GCS URI
@@ -174,11 +201,15 @@ distillfw run-stage gs://my-distillfw-bucket/tasks/support-ticket-triage-v1 --st
 distillfw run-stage gs://my-distillfw-bucket/tasks/support-ticket-triage-v1 --stage model_deployer
 ```
 
-### 4.4 Inspect Task Status & List All Tracked Tasks
+### 4.4 Inspect Task Status, Reset Stages, & List All Tracked Tasks
 
 ```bash
 # View detailed per-stage status, attempt counts, and shard/checkpoint cursors
 distillfw status gs://my-distillfw-bucket/tasks/support-ticket-triage-v1
+
+# Reset the model_trainer or model_evaluator stage status back to PENDING
+distillfw reset-training gs://my-distillfw-bucket/tasks/support-ticket-triage-v1
+distillfw reset-eval gs://my-distillfw-bucket/tasks/support-ticket-triage-v1
 
 # List all tracked distillation tasks in your bucket
 distillfw list gs://my-distillfw-bucket/tasks

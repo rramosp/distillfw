@@ -44,6 +44,35 @@ def test_full_pipeline_and_midway_stateless_resumption(tmp_path: Path) -> None:
     gen_cursor = state_after_phase_1.stages[StageName.DATASET_GENERATOR].progress_cursor
     assert gen_cursor["completed_shards"] == [0, 1, 2]
 
+    # Verify both train.parquet and test.parquet exist and are disjoint
+    assert storage.exists("gs://test-bucket/tasks/e2e-distill-task/02_formatted_dataset/train.parquet")
+    assert storage.exists("gs://test-bucket/tasks/e2e-distill-task/02_formatted_dataset/test.parquet")
+
+    import pandas as pd
+
+    train_df = pd.read_parquet(
+        storage.download_file(
+            "gs://test-bucket/tasks/e2e-distill-task/02_formatted_dataset/train.parquet",
+            tmp_path / "dl_train.parquet",
+        )
+    )
+    test_df = pd.read_parquet(
+        storage.download_file(
+            "gs://test-bucket/tasks/e2e-distill-task/02_formatted_dataset/test.parquet",
+            tmp_path / "dl_test.parquet",
+        )
+    )
+    assert len(train_df) >= 1
+    assert len(test_df) >= 1
+    assert set(train_df["prompt"]).isdisjoint(set(test_df["prompt"]))
+
+    def _extract_raw_prompt(formatted_prompt: str) -> str:
+        return (
+            formatted_prompt.replace("<start_of_turn>user\n", "")
+            .replace("<end_of_turn>\n<start_of_turn>model\n", "")
+            .strip()
+        )
+
     # Phase 2: Resume remaining stages (3, 4, 5) on Worker 2 using ONLY task_uri
     pipeline_worker_2 = DistillationPipeline.from_task_uri(
         task_uri="gs://test-bucket/tasks/e2e-distill-task",
@@ -52,11 +81,19 @@ def test_full_pipeline_and_midway_stateless_resumption(tmp_path: Path) -> None:
             "train_loss": 0.19,
             "global_step": 25,
         },
+        base_student_predict_fn=lambda prompts: (
+            ["Unrelated baseline answer" for _ in prompts],
+            [15.0 for _ in prompts],
+        ),
         student_predict_fn=lambda prompts: (
-            [f"Summary of {p}" for p in prompts],
+            [f"Summary of {_extract_raw_prompt(p)}" for p in prompts],
             [14.2 for _ in prompts],
         ),
-        judge_fn=lambda p, ref, pred: {"score": 5, "reason": "Matches teacher"},
+        judge_fn=lambda p, ref, pred: (
+            {"score": 5, "reason": "Matches teacher"}
+            if pred.strip() == ref.strip()
+            else {"score": 2, "reason": "Baseline miss"}
+        ),
         deploy_fn=lambda task_id, model_uri, deploy_cfg: {
             "endpoint_resource_name": f"projects/test-proj/locations/us-central1/endpoints/{task_id}",
             "model_artifact_uri": model_uri,
@@ -71,3 +108,27 @@ def test_full_pipeline_and_midway_stateless_resumption(tmp_path: Path) -> None:
     # Verify evaluation scorecard and deployment manifest exist on GCS
     assert storage.exists("gs://test-bucket/tasks/e2e-distill-task/04_evaluation/scorecard.json")
     assert storage.exists("gs://test-bucket/tasks/e2e-distill-task/06_deployment/endpoint_info.json")
+
+    scorecard = storage.read_json(
+        "gs://test-bucket/tasks/e2e-distill-task/04_evaluation/scorecard.json"
+    )
+    for split_name in ("train", "test"):
+        assert split_name in scorecard["before_training"]
+        assert split_name in scorecard["after_training"]
+        assert split_name in scorecard["improvement"]
+        assert split_name in scorecard["splits"]
+
+        before_em = scorecard["before_training"][split_name]["lexical_metrics"]["exact_match"]
+        after_em = scorecard["after_training"][split_name]["lexical_metrics"]["exact_match"]
+        delta_em = scorecard["improvement"][split_name]["lexical_metrics"]["exact_match"]
+        assert before_em == 0.0
+        assert after_em == 1.0
+        assert delta_em == 1.0
+
+        before_judge = scorecard["before_training"][split_name]["llm_judge"]["mean_rubric_score"]
+        after_judge = scorecard["after_training"][split_name]["llm_judge"]["mean_rubric_score"]
+        delta_judge = scorecard["improvement"][split_name]["llm_judge"]["mean_rubric_score"]
+        assert before_judge == 2.0
+        assert after_judge == 5.0
+        assert delta_judge == 3.0
+

@@ -1,0 +1,47 @@
+# Python bytecode & packaging
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+pip-wheel-metadata/
+
+# Testing & linting caches
+.pytest_cache/
+.coverage
+htmlcov/
+.mypy_cache/
+.ruff_cache/
+.hypothesis/
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+
+# Local ML checkpoints, datasets & GCS emulator roots
+checkpoints/
+outputs/
+wandb/
+runs/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+
+# IDE & OS files
+.DS_Store
+.vscode/
+.idea/
+*.swp
+*~

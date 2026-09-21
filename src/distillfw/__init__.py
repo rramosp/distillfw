@@ -9,6 +9,7 @@ from distillfw.config import (
     EvaluationMetric,
     FormatConfig,
     GCPConfig,
+    LocalConfig,
     PromptFormat,
     StudentConfig,
     StudentModel,
@@ -17,8 +18,17 @@ from distillfw.config import (
     TrainingAlgorithm,
     TrainingConfig,
 )
+from distillfw.logging_utils import TaskRunLogger, get_logger
 from distillfw.pipeline import DistillationPipeline
-from distillfw.state import StageName, StageStatus, TaskState, TaskWorkspace
+from distillfw.state import (
+    StageName,
+    StageStatus,
+    TaskInitializationError,
+    TaskResetAbortedError,
+    TaskState,
+    TaskWorkspace,
+    TaskWorkspaceExistsError,
+)
 
 __version__ = "0.1.0"
 
@@ -32,15 +42,21 @@ __all__ = [
     "EvaluationMetric",
     "FormatConfig",
     "GCPConfig",
+    "LocalConfig",
     "PromptFormat",
     "StageName",
     "StageStatus",
     "StudentConfig",
     "StudentModel",
+    "TaskInitializationError",
+    "TaskResetAbortedError",
+    "TaskRunLogger",
     "TaskState",
     "TaskWorkspace",
+    "TaskWorkspaceExistsError",
     "TeacherConfig",
     "TeacherModel",
     "TrainingAlgorithm",
     "TrainingConfig",
+    "get_logger",
 ]
