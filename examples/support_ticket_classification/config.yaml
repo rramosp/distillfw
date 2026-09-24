@@ -7,19 +7,26 @@ gcp:
   bucket_name: distillfw-storage
   tasks_prefix: tasks
 
+prompt_construction:
+  system_instructions: >-
+    You are an enterprise technical support triage classifier. For each incoming support ticket,
+    output a valid JSON object containing: category, subcategory, severity (P0/P1/P2/P3),
+    routing_queue, requires_escalation (boolean), and a one-sentence summary.
+  prompt_template: |-
+    Classify the following customer support ticket and output structured JSON.
+    Ticket ID: {ticket_id}
+    Customer Tier: {customer_tier}
+    Ticket Body: {ticket_body}
+
 teacher:
   model_id: gemini-3.5-flash
   location: global
   temperature: 0.1
   top_p: 0.95
-  max_output_tokens: 512
+  max_output_tokens: 2048
   candidate_count: 1
   response_logprobs: false
   thinking_budget: null
-  system_instruction: >-
-    You are an enterprise technical support triage classifier. For each incoming support ticket,
-    output a valid JSON object containing: category, subcategory, severity (P0/P1/P2/P3),
-    routing_queue, requires_escalation (boolean), and a one-sentence summary.
   shard_size: 50
 
 student:
@@ -29,7 +36,7 @@ student:
   lora_r: 16
   lora_alpha: 32
   lora_dropout: 0.05
-  max_seq_length: 1024
+  max_seq_length: 2048
   dtype: bfloat16
 
 formatting:
@@ -64,6 +71,9 @@ evaluation:
   judge_model_id: gemini-3.5-flash
   judge_model_location: global
   max_eval_samples: 50
+  vertex_machine_type: g2-standard-12
+  vertex_accelerator_type: NVIDIA_L4
+  vertex_accelerator_count: 1
 
 deployment:
   merge_lora: true

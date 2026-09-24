@@ -107,7 +107,7 @@ class DistillationPipeline:
                     student_predict_fn=self.student_predict_fn,
                     base_student_predict_fn=self.base_student_predict_fn,
                     judge_fn=self.judge_fn,
-                ).run()
+                ).run(force_local=force_local_train)
             if stage == StageName.MODEL_DEPLOYER:
                 return ModelDeployer(
                     workspace=self.workspace, deploy_fn=self.deploy_fn

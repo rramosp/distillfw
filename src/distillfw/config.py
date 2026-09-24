@@ -137,6 +137,33 @@ class LocalConfig(BaseModel):
         return f"{root}/{task_id}"
 
 
+class PromptConstructionConfig(BaseModel):
+    """Configuration for constructing model prompts from structured 'data' records in prompts.jsonl."""
+
+    system_instructions: str | None = Field(
+        default=None,
+        description="System instructions applied across both Teacher and Student models.",
+    )
+    prompt_template: str = Field(
+        default="{prompt}",
+        description="String template with {field_name} placeholders populated from the 'data' dictionary of each record in prompts.jsonl.",
+    )
+
+    def render_prompt(self, record: dict[str, Any]) -> str:
+        """Populate `prompt_template` with the fields inside `record['data']`."""
+        if not isinstance(record, dict) or "data" not in record or not isinstance(record["data"], dict):
+            raise ValueError(
+                "Each record in prompts.jsonl must contain a 'data' JSON object (dictionary) field."
+            )
+        data_dict = record["data"]
+        try:
+            return self.prompt_template.format(**data_dict)
+        except KeyError as exc:
+            raise ValueError(
+                f"Missing required placeholder field {exc} in record 'data' for prompt_template: {self.prompt_template!r}"
+            ) from exc
+
+
 class TeacherConfig(BaseModel):
     """Configuration for querying the Gemini teacher model (Stage 1)."""
 
@@ -162,9 +189,6 @@ class TeacherConfig(BaseModel):
     )
     thinking_budget: int | None = Field(
         default=None, description="Optional thinking token budget for Gemini 3.5 reasoning traces"
-    )
-    system_instruction: str | None = Field(
-        default=None, description="Optional system instruction prepended to teacher queries"
     )
     use_batch_prediction: bool = Field(
         default=False,
@@ -313,10 +337,57 @@ class EvaluationConfig(BaseModel):
     teacher_cost_per_1m_output: float = Field(default=10.00)
     student_hourly_gpu_cost: float = Field(default=1.20)
 
+    # Optional single-node Vertex AI Custom Job hardware specifications for Stage 4 evaluation
+    vertex_machine_type: str | None = Field(
+        default=None,
+        description="Optional Vertex AI machine type for Stage 4 evaluation (e.g., 'g2-standard-12')",
+    )
+    vertex_accelerator_type: str | None = Field(
+        default=None,
+        description="Optional Vertex AI GPU accelerator type for Stage 4 evaluation (e.g., 'NVIDIA_L4')",
+    )
+    vertex_accelerator_count: int | None = Field(
+        default=None,
+        ge=1,
+        le=8,
+        description="Optional single-node GPU count (1 to 8) for Stage 4 evaluation",
+    )
+    vertex_container_uri: str = Field(
+        default="us-docker.pkg.dev/vertex-ai/training/pytorch-gpu.2-2.py310:latest"
+    )
+
+    @model_validator(mode="after")
+    def validate_vertex_eval_hardware_fields(self) -> EvaluationConfig:
+        """Ensure that if any Vertex AI evaluation hardware option is set, all three are provided."""
+        provided = {
+            "vertex_machine_type": self.vertex_machine_type is not None,
+            "vertex_accelerator_type": self.vertex_accelerator_type is not None,
+            "vertex_accelerator_count": self.vertex_accelerator_count is not None,
+        }
+        if any(provided.values()) and not all(provided.values()):
+            missing = [k for k, v in provided.items() if not v]
+            raise ValueError(
+                "Incomplete Vertex AI evaluation hardware configuration under 'evaluation:'. "
+                f"When specifying Vertex AI evaluation hardware, all three options "
+                f"(vertex_machine_type, vertex_accelerator_type, vertex_accelerator_count) "
+                f"must be set. Missing: {', '.join(missing)}"
+            )
+        return self
+
+    @property
+    def has_vertex_custom_job_config(self) -> bool:
+        """Return True when Vertex AI Custom Job hardware options are configured for evaluation."""
+        return (
+            self.vertex_machine_type is not None
+            and self.vertex_accelerator_type is not None
+            and self.vertex_accelerator_count is not None
+        )
+
     @property
     def resolved_judge_location(self) -> str | None:
         """Return judge_model_location if set, falling back to judge_location."""
         return self.judge_model_location or self.judge_location
+
 
 
 class DeploymentConfig(BaseModel):
@@ -346,6 +417,10 @@ class DistillationConfig(BaseModel):
     gcp: GCPConfig | None = Field(default=None, description="GCP infrastructure configuration")
     local: LocalConfig | None = Field(
         default=None, description="Local filesystem storage configuration"
+    )
+    prompt_construction: PromptConstructionConfig = Field(
+        default_factory=PromptConstructionConfig,
+        description="System instructions and prompt template for constructing prompts from prompts.jsonl 'data' records",
     )
     teacher: TeacherConfig = Field(default_factory=TeacherConfig)
     student: StudentConfig = Field(default_factory=StudentConfig)

@@ -2,8 +2,9 @@
 
 This example distills **Gemini 3.5 Flash** (`gemini-3.5-flash`) into **Gemma 3 4B** (`google/gemma-3-4b-it`) to perform low-latency retail product search query expansion (rewriting dense product queries, generating retail keyword synonyms, classifying query specificity, and extracting structured product attributes like brand, color, material, size, and style).
 
-## Dataset
+## Dataset & Prompt Construction
 - **File**: [`prompts.jsonl`](prompts.jsonl)
+- **Format**: Each JSONL line contains a `"data"` JSON object (`retail_category`, `query_detail_level`, `shopper_query`) and `"metadata"`, which are populated into `prompt_construction.prompt_template` (and paired with `prompt_construction.system_instructions`) in [`config.yaml`](config.yaml) for both the Teacher and Student models.
 - **Size**: **150 retail shopper queries** spanning 10 retail categories (`footwear_athletic`, `apparel_fashion`, `consumer_electronics`, `home_kitchen_appliances`, `furniture_decor`, `beauty_personal_care`, `sports_outdoor_gear`, `luggage_bags`, `watches_jewelry`, `toys_baby_pet_supplies`) across three explicit levels of product detail (`specificity_level`):
   - **Broad (`broad`)**: Short, underspecified category searches (e.g., `"running shoes"`, `"denim jacket"`, `"espresso machine"`).
   - **Medium (`medium`)**: Multi-attribute functional/style searches (e.g., `"waterproof trail running shoes with wide toe box"`, `"oversized vintage wash blue denim trucker jacket"`).

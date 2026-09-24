@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from enum import Enum
+import json
 import os
 from pathlib import Path
 from typing import Any
@@ -246,10 +247,11 @@ def verify_teacher_logprobs_support(
                 lambda: client.chats.create(
                     model=config.teacher.model_id,
                     config=types.GenerateContentConfig(
-                        max_output_tokens=16,
+                        max_output_tokens=32,
                         temperature=config.teacher.temperature,
                         response_logprobs=True,
                         logprobs=required_top_k,
+                        thinking_config=types.ThinkingConfig(thinking_budget=0),
                     ),
                 ).send_message(message="Preflight logprobs verification probe."),
                 max_retries=config.teacher.max_retries,
@@ -354,7 +356,8 @@ def verify_judge_model_access(
         )
         gen_cfg = types.GenerateContentConfig(
             temperature=0.0,
-            max_output_tokens=8,
+            max_output_tokens=32,
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
         )
         call_with_exponential_backoff(
             lambda: client.chats.create(model=judge_model_id, config=gen_cfg).send_message(
@@ -489,6 +492,21 @@ class TaskWorkspace:
             config.teacher.response_logprobs,
             config.evaluation.judge_model_id,
         )
+        prompts_src = Path(prompts_path)
+        if prompts_src.suffix.lower() == ".jsonl" and prompts_src.exists():
+            for line_idx, raw_line in enumerate(
+                prompts_src.read_text(encoding="utf-8").splitlines(), start=1
+            ):
+                if not raw_line.strip():
+                    continue
+                try:
+                    rec = json.loads(raw_line)
+                    config.prompt_construction.render_prompt(rec)
+                except Exception as exc:
+                    raise TaskInitializationError(
+                        f"Prompt construction validation failed at line {line_idx} of '{prompts_src}': {exc}"
+                    ) from exc
+
         verify_teacher_logprobs_support(config, teacher_callable=teacher_callable)
         verify_judge_model_access(config, storage=backend, judge_callable=judge_callable)
         logger.info("Preflight validation succeeded for task '%s'.", config.task_id)
@@ -498,7 +516,6 @@ class TaskWorkspace:
         logger.info("Uploaded frozen configuration snapshot to %s", ws.config_uri)
 
         # Persist immutable copy of input prompts
-        prompts_src = Path(prompts_path)
         prompts_dest_uri = f"{ws.inputs_dir_uri}/{prompts_src.name}"
         ws.storage.upload_file(prompts_src, prompts_dest_uri)
         logger.info("Uploaded input prompt dataset to %s", prompts_dest_uri)
@@ -668,28 +685,16 @@ class TaskWorkspace:
                 )
 
     def refresh_vertex_training_status(self) -> TaskState:
-        """If `model_trainer` is RUNNING with a Vertex AI Custom Job, query its live status
-        on Vertex AI, update the stage/task status and progress cursor accordingly,
-        persist the updated `task_state.json` to GCS, and return the refreshed `TaskState`.
+        """If `model_trainer` or `model_evaluator` is RUNNING with a Vertex AI Custom Job,
+        query its live status on Vertex AI, update the stage/task status and progress cursor
+        accordingly, persist the updated `task_state.json` to GCS, and return the refreshed `TaskState`.
         """
         state = self.load_state()
-        trainer_rec = state.stages[StageName.MODEL_TRAINER]
-        job_resource_name = trainer_rec.progress_cursor.get("vertex_job_resource_name")
-
-        if trainer_rec.status != StageStatus.RUNNING or not job_resource_name:
-            return state
-
-        config = self.load_config()
-        if config.gcp is None:
-            return state
+        config = None
+        job_mgr = None
+        state_mutated = False
 
         from distillfw.gcp.vertex import VertexJobManager, normalize_vertex_job_state
-
-        job_mgr = VertexJobManager(config.gcp)
-        job_info = job_mgr.get_job_status(job_resource_name)
-        normalized_state = normalize_vertex_job_state(job_info.get("state", ""))
-
-        trainer_rec.progress_cursor["vertex_job_state"] = normalized_state
 
         terminal_success = {"JOB_STATE_SUCCEEDED"}
         terminal_failure = {
@@ -699,16 +704,43 @@ class TaskWorkspace:
             "JOB_STATE_EXPIRED",
         }
 
-        if normalized_state in terminal_success:
-            trainer_rec.status = StageStatus.COMPLETED
-            trainer_rec.completed_at = trainer_rec.completed_at or _utc_now()
-            trainer_rec.error_message = None
-            trainer_rec.artifacts.update(
-                {
-                    "exported_model_uri": self.exported_model_dir_uri,
-                    "vertex_job_resource_name": job_resource_name,
-                }
-            )
+        for stage_enum, default_artifacts in (
+            (StageName.MODEL_TRAINER, {"exported_model_uri": self.exported_model_dir_uri}),
+            (StageName.MODEL_EVALUATOR, {"scorecard_uri": f"{self.evaluation_dir_uri}/scorecard.json"}),
+        ):
+            stage_rec = state.stages[stage_enum]
+            job_resource_name = stage_rec.progress_cursor.get("vertex_job_resource_name")
+            if stage_rec.status != StageStatus.RUNNING or not job_resource_name:
+                continue
+
+            if config is None:
+                config = self.load_config()
+                if config.gcp is None:
+                    return state
+                job_mgr = VertexJobManager(config.gcp)
+
+            assert job_mgr is not None
+            job_info = job_mgr.get_job_status(job_resource_name)
+            normalized_state = normalize_vertex_job_state(job_info.get("state", ""))
+            stage_rec.progress_cursor["vertex_job_state"] = normalized_state
+            state_mutated = True
+
+            if normalized_state in terminal_success:
+                stage_rec.status = StageStatus.COMPLETED
+                stage_rec.completed_at = stage_rec.completed_at or _utc_now()
+                stage_rec.error_message = None
+                stage_rec.artifacts.update(
+                    {
+                        **default_artifacts,
+                        "vertex_job_resource_name": job_resource_name,
+                    }
+                )
+            elif normalized_state in terminal_failure:
+                err_detail = job_info.get("error") or f"Vertex AI job terminated with state {normalized_state}"
+                stage_rec.status = StageStatus.FAILED
+                stage_rec.error_message = err_detail
+
+        if state_mutated:
             if all(state.stages[s].status == StageStatus.COMPLETED for s in ORDERED_STAGES):
                 state.status = StageStatus.COMPLETED
                 state.current_stage = None
@@ -716,13 +748,7 @@ class TaskWorkspace:
                 state.status = StageStatus.FAILED
             else:
                 state.status = StageStatus.RUNNING
-        elif normalized_state in terminal_failure:
-            err_detail = job_info.get("error") or f"Vertex AI job terminated with state {normalized_state}"
-            trainer_rec.status = StageStatus.FAILED
-            trainer_rec.error_message = err_detail
-            state.status = StageStatus.FAILED
-        else:
-            state.status = StageStatus.RUNNING
+            self.save_state(state)
 
-        self.save_state(state)
         return state
+

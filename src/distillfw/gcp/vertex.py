@@ -79,18 +79,17 @@ class VertexJobManager:
             return cache_token_path.read_text(encoding="utf-8").strip()
         return None
 
-    def submit_training_job(
+    def _submit_stage_custom_job(
         self,
         display_name: str,
         task_uri: str,
-        training_config: TrainingConfig,
+        stage_name: str,
+        machine_type: str,
+        accelerator_type: str,
+        accelerator_count: int,
+        container_uri: str,
     ) -> dict[str, Any]:
-        """Submit a single-node multi-GPU Vertex AI Custom Training Job.
-
-        Uploads the local `distillfw` package archive to `<task_uri>/00_inputs/distillfw_package.tar.gz`,
-        installs it inside the Vertex AI prebuilt PyTorch GPU container, and executes
-        `python3 -m distillfw.cli run-stage <task_uri> --stage model_trainer --local-exec`.
-        """
+        """Submit a single-node GPU Vertex AI Custom Job for `stage_name` (`model_trainer` or `model_evaluator`)."""
         from google.cloud import aiplatform
 
         staging_bucket = (
@@ -117,19 +116,19 @@ class VertexJobManager:
             f"python3 -c \"import numpy, scipy, torch, transformers, accelerate, peft, trl; "
             f"print('NumPy:', numpy.__version__, 'PyTorch:', torch.__version__, 'CUDA:', torch.cuda.is_available(), 'Transformers:', transformers.__version__); "
             f"assert transformers.utils.is_torch_available(), 'transformers reports torch unavailable'\" && "
-            f"python3 -m distillfw.cli run-stage '{task_uri}' --stage model_trainer --local-exec"
+            f"python3 -m distillfw.cli run-stage '{task_uri}' --stage {stage_name} --local-exec"
         )
 
         worker_pool_specs = [
             {
                 "machine_spec": {
-                    "machine_type": training_config.vertex_machine_type,
-                    "accelerator_type": training_config.vertex_accelerator_type,
-                    "accelerator_count": training_config.vertex_accelerator_count,
+                    "machine_type": machine_type,
+                    "accelerator_type": accelerator_type,
+                    "accelerator_count": accelerator_count,
                 },
                 "replica_count": 1,  # Strictly single-node per specification
                 "container_spec": {
-                    "image_uri": training_config.vertex_container_uri,
+                    "image_uri": container_uri,
                     "command": ["bash", "-c"],
                     "args": [bootstrap_script],
                     "env": env_vars,
@@ -148,6 +147,50 @@ class VertexJobManager:
             "display_name": display_name,
             "state": norm_state,
         }
+
+    def submit_training_job(
+        self,
+        display_name: str,
+        task_uri: str,
+        training_config: TrainingConfig,
+    ) -> dict[str, Any]:
+        """Submit a single-node multi-GPU Vertex AI Custom Training Job.
+
+        Uploads the local `distillfw` package archive to `<task_uri>/00_inputs/distillfw_package.tar.gz`,
+        installs it inside the Vertex AI prebuilt PyTorch GPU container, and executes
+        `python3 -m distillfw.cli run-stage <task_uri> --stage model_trainer --local-exec`.
+        """
+        return self._submit_stage_custom_job(
+            display_name=display_name,
+            task_uri=task_uri,
+            stage_name="model_trainer",
+            machine_type=training_config.vertex_machine_type,
+            accelerator_type=training_config.vertex_accelerator_type,
+            accelerator_count=training_config.vertex_accelerator_count,
+            container_uri=training_config.vertex_container_uri,
+        )
+
+    def submit_evaluation_job(
+        self,
+        display_name: str,
+        task_uri: str,
+        evaluation_config: Any,
+    ) -> dict[str, Any]:
+        """Submit a single-node GPU Vertex AI Custom Evaluation Job for Stage 4 (`model_evaluator`).
+
+        Uploads the local `distillfw` package archive to `<task_uri>/00_inputs/distillfw_package.tar.gz`,
+        installs it inside the Vertex AI prebuilt PyTorch GPU container, and executes
+        `python3 -m distillfw.cli run-stage <task_uri> --stage model_evaluator --local-exec`.
+        """
+        return self._submit_stage_custom_job(
+            display_name=display_name,
+            task_uri=task_uri,
+            stage_name="model_evaluator",
+            machine_type=evaluation_config.vertex_machine_type,
+            accelerator_type=evaluation_config.vertex_accelerator_type,
+            accelerator_count=int(evaluation_config.vertex_accelerator_count),
+            container_uri=evaluation_config.vertex_container_uri,
+        )
 
     def get_job_status(self, job_resource_name: str) -> dict[str, Any]:
         """Retrieve status of an existing Vertex AI Custom Job."""

@@ -56,10 +56,16 @@ class DatasetGenerator:
         prompt_record: dict[str, Any],
         teacher_cfg: Any,
         gcp_cfg: Any,
+        prompt_format: str | None = None,
+        prompt_construction_cfg: Any = None,
     ) -> dict[str, Any]:
+        from distillfw.config import PromptConstructionConfig
         from distillfw.gcp.retry import call_with_exponential_backoff
+        from distillfw.logging_utils import get_logger
 
-        prompt_text = prompt_record.get("prompt") or prompt_record.get("input") or str(prompt_record)
+        logger = get_logger("stages.generator")
+        pc_cfg = prompt_construction_cfg or PromptConstructionConfig()
+        prompt_text = pc_cfg.render_prompt(prompt_record)
 
         if self.teacher_callable is not None:
             result = call_with_exponential_backoff(
@@ -71,6 +77,7 @@ class DatasetGenerator:
                 operation_name=f"Teacher inference ({teacher_cfg.model_id})",
             )
             return {
+                "data": prompt_record["data"],
                 "prompt": prompt_text,
                 "completion": result["completion"],
                 "thought": result.get("thought"),
@@ -90,33 +97,69 @@ class DatasetGenerator:
             vertexai=True, project=project_id, location=teacher_location
         )
 
+        wants_reasoning = (
+            (teacher_cfg.thinking_budget is not None and teacher_cfg.thinking_budget > 0)
+            or str(prompt_format or "").lower() == "reasoning"
+        )
+        if wants_reasoning:
+            effective_thinking_budget = (
+                teacher_cfg.thinking_budget
+                if (teacher_cfg.thinking_budget is not None and teacher_cfg.thinking_budget > 0)
+                else 1024
+            )
+            effective_max_output_tokens = teacher_cfg.max_output_tokens + effective_thinking_budget
+            thinking_cfg = types.ThinkingConfig(
+                thinking_budget=effective_thinking_budget,
+                include_thoughts=True,
+            )
+        else:
+            effective_max_output_tokens = teacher_cfg.max_output_tokens
+            thinking_cfg = types.ThinkingConfig(thinking_budget=0)
+
         gen_config_kwargs: dict[str, Any] = {
             "temperature": teacher_cfg.temperature,
             "top_p": teacher_cfg.top_p,
-            "max_output_tokens": teacher_cfg.max_output_tokens,
+            "max_output_tokens": effective_max_output_tokens,
             "candidate_count": teacher_cfg.candidate_count,
+            "thinking_config": thinking_cfg,
         }
-        if teacher_cfg.system_instruction:
-            gen_config_kwargs["system_instruction"] = teacher_cfg.system_instruction
+        if pc_cfg.system_instructions:
+            gen_config_kwargs["system_instruction"] = pc_cfg.system_instructions
         if teacher_cfg.response_logprobs:
             gen_config_kwargs["response_logprobs"] = True
             gen_config_kwargs["logprobs"] = teacher_cfg.logprobs_top_k
-        if teacher_cfg.thinking_budget is not None:
-            gen_config_kwargs["thinking_config"] = types.ThinkingConfig(
-                thinking_budget=teacher_cfg.thinking_budget
+
+        def _invoke(cfg_kwargs: dict[str, Any]):
+            return call_with_exponential_backoff(
+                lambda: client.chats.create(
+                    model=teacher_cfg.model_id,
+                    config=types.GenerateContentConfig(**cfg_kwargs),
+                ).send_message(message=prompt_text),
+                max_retries=teacher_cfg.max_retries,
+                initial_delay=teacher_cfg.initial_retry_delay_seconds,
+                max_delay=teacher_cfg.max_retry_delay_seconds,
+                multiplier=teacher_cfg.backoff_multiplier,
+                operation_name=f"Stage 1 Gemini inference ({teacher_cfg.model_id})",
             )
 
-        response = call_with_exponential_backoff(
-            lambda: client.chats.create(
-                model=teacher_cfg.model_id,
-                config=types.GenerateContentConfig(**gen_config_kwargs),
-            ).send_message(message=prompt_text),
-            max_retries=teacher_cfg.max_retries,
-            initial_delay=teacher_cfg.initial_retry_delay_seconds,
-            max_delay=teacher_cfg.max_retry_delay_seconds,
-            multiplier=teacher_cfg.backoff_multiplier,
-            operation_name=f"Stage 1 Gemini inference ({teacher_cfg.model_id})",
-        )
+        response = _invoke(gen_config_kwargs)
+
+        if getattr(response, "candidates", None):
+            first_cand = response.candidates[0]
+            finish_reason_str = str(getattr(first_cand, "finish_reason", "") or "")
+            if "MAX_TOKENS" in finish_reason_str:
+                retry_budget = max(effective_max_output_tokens * 2, 4096)
+                logger.warning(
+                    "Teacher response hit %s (max_output_tokens=%d). Retrying with max_output_tokens=%d and thinking_budget=0 to prevent truncated training target...",
+                    finish_reason_str,
+                    effective_max_output_tokens,
+                    retry_budget,
+                )
+                retry_kwargs = dict(gen_config_kwargs)
+                retry_kwargs["max_output_tokens"] = retry_budget
+                if not wants_reasoning:
+                    retry_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
+                response = _invoke(retry_kwargs)
 
         thought_text: str | None = None
         answer_text: str = response.text or ""
@@ -145,6 +188,7 @@ class DatasetGenerator:
                     extracted_logprobs.append({"top_candidates": step_candidates})
 
         return {
+            "data": prompt_record["data"],
             "prompt": prompt_text,
             "completion": answer_text,
             "thought": thought_text,
@@ -213,7 +257,13 @@ class DatasetGenerator:
                     len(shard_prompts),
                 )
                 shard_records = [
-                    self._call_gemini_single(p, config.teacher, config.gcp)
+                    self._call_gemini_single(
+                        p,
+                        config.teacher,
+                        config.gcp,
+                        prompt_format=config.formatting.prompt_format.value,
+                        prompt_construction_cfg=config.prompt_construction,
+                    )
                     for p in shard_prompts
                 ]
 

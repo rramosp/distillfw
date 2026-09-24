@@ -15,7 +15,7 @@ def test_full_pipeline_and_midway_stateless_resumption(tmp_path: Path) -> None:
     storage = StorageBackend(local_root=tmp_path)
     prompts_file = tmp_path / "prompts.jsonl"
     prompts_file.write_text(
-        "\n".join(json.dumps({"prompt": f"Summarize doc #{i}"}) for i in range(20)) + "\n",
+        "\n".join(json.dumps({"data": {"prompt": f"Summarize doc #{i}"}}) for i in range(20)) + "\n",
         encoding="utf-8",
     )
 

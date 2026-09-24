@@ -57,7 +57,7 @@ def test_config_yaml_roundtrip_and_splits(tmp_path: Path) -> None:
 def test_isolated_multi_task_workspaces_and_stateless_resumption(tmp_path: Path) -> None:
     storage = StorageBackend(local_root=tmp_path)
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     cfg1 = DistillationConfig(
         task_id="task-001",
@@ -91,10 +91,18 @@ def test_bundled_examples_configs_and_datasets_valid() -> None:
         cfg = DistillationConfig.from_yaml(example_dir / "config.yaml")
         assert cfg.teacher.model_id == "gemini-3.5-flash"
         assert cfg.teacher.location == "global"
+        assert cfg.prompt_construction.system_instructions is not None
+        assert len(cfg.prompt_construction.system_instructions) > 20
         lines = (example_dir / "prompts.jsonl").read_text(encoding="utf-8").splitlines()
         rows = [json.loads(line) for line in lines if line.strip()]
         assert 100 <= len(rows) <= 200
-        assert all("prompt" in r and len(r["prompt"]) > 20 for r in rows)
+        assert all(
+            "data" in r
+            and isinstance(r["data"], dict)
+            and "prompt" not in r
+            and len(cfg.prompt_construction.render_prompt(r)) > 20
+            for r in rows
+        )
 
 
 def test_init_preflight_logprobs_compatibility_and_probe(tmp_path: Path) -> None:
@@ -103,7 +111,7 @@ def test_init_preflight_logprobs_compatibility_and_probe(tmp_path: Path) -> None
 
     storage = StorageBackend(local_root=tmp_path)
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     # 1. Algorithm does not need logprobs (sft_seqkd) but response_logprobs=True -> error
     cfg_bad_non_logprob = DistillationConfig(
@@ -209,7 +217,7 @@ def test_init_warns_and_exits_when_gcs_not_empty_unless_force_reset(
     config_file.write_text(cfg.to_yaml(), encoding="utf-8")
 
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     runner = CliRunner()
 
@@ -270,7 +278,7 @@ def test_activity_logging_local_timestamped_file_and_periodic_gcs_upload(
     storage = StorageBackend(local_root=tmp_path / "gcs_root")
     local_log_dir = tmp_path / "local_logs"
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     cfg = DistillationConfig(
         task_id="log-sync-task",
@@ -344,7 +352,7 @@ def test_init_preflight_checks_gcp_bucket_region_match(tmp_path: Path) -> None:
     from distillfw.state import TaskInitializationError
 
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     cfg = DistillationConfig(
         task_id="region-check-task",
@@ -400,7 +408,7 @@ def test_upstream_stage_prerequisite_and_vertex_job_waiting(
 
     storage = StorageBackend(local_root=tmp_path)
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     cfg = DistillationConfig(
         task_id="prerequisite-test",
@@ -462,7 +470,7 @@ def test_status_cmd_refreshes_vertex_training_job_and_persists_to_gcs(
     monkeypatch.setattr("distillfw.state.StorageBackend", lambda *a, **kw: storage)
 
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     cfg = DistillationConfig(
         task_id="status-refresh-test",
@@ -572,7 +580,7 @@ def test_trainer_resubmits_new_job_when_previous_vertex_job_failed(
 
     storage = StorageBackend(local_root=tmp_path)
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     cfg = DistillationConfig(
         task_id="trainer-resubmit-test",
@@ -647,7 +655,7 @@ def test_hf_token_required_on_init_and_model_trainer(
     config_file.write_text(cfg.to_yaml(), encoding="utf-8")
 
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     runner = CliRunner()
 
@@ -698,7 +706,7 @@ def test_reset_training_and_reset_eval_cli_commands(tmp_path: Path) -> None:
         local=LocalConfig(storage_root=str(tasks_root)),
     )
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     ws = TaskWorkspace.initialize(cfg, prompts_file)
     ws.mark_stage_completed(StageName.DATASET_GENERATOR)
@@ -752,7 +760,7 @@ def test_judge_model_access_preflight_in_init_and_evaluator_and_location_config(
     assert cfg.evaluation.resolved_judge_location == "global"
 
     prompts_file = tmp_path / "prompts.jsonl"
-    prompts_file.write_text(json.dumps({"prompt": "Hello"}) + "\n", encoding="utf-8")
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
 
     def failing_judge(_p: str, _r: str, _s: str):
         raise RuntimeError(
@@ -837,6 +845,388 @@ def test_judge_model_access_preflight_in_init_and_evaluator_and_location_config(
         verify_judge_model_access(gcp_cfg, judge_callable=None)
     finally:
         genai.Client = orig_client  # type: ignore[assignment]
+
+
+def test_evaluation_config_vertex_hardware_fields_and_example_configs() -> None:
+    from pydantic import ValidationError
+    from distillfw.config import EvaluationConfig
+
+    # 1. Omitted -> local execution mode
+    cfg_local = EvaluationConfig()
+    assert cfg_local.has_vertex_custom_job_config is False
+
+    # 2. All three present -> Vertex AI Custom Job mode
+    cfg_vertex = EvaluationConfig(
+        vertex_machine_type="g2-standard-12",
+        vertex_accelerator_type="NVIDIA_L4",
+        vertex_accelerator_count=1,
+    )
+    assert cfg_vertex.has_vertex_custom_job_config is True
+
+    # 3. Partial specification -> ValidationError
+    with pytest.raises(ValidationError):
+        EvaluationConfig(vertex_machine_type="g2-standard-12")
+
+    # 4. Both bundled example config.yaml files include the single-L4 evaluation config
+    repo_root = Path(__file__).resolve().parent.parent
+    for rel_path in (
+        "examples/support_ticket_classification/config.yaml",
+        "examples/query_expansion/config.yaml",
+    ):
+        ex_cfg = DistillationConfig.from_yaml(repo_root / rel_path)
+        assert ex_cfg.evaluation.has_vertex_custom_job_config is True
+        assert ex_cfg.evaluation.vertex_machine_type == "g2-standard-12"
+        assert ex_cfg.evaluation.vertex_accelerator_type == "NVIDIA_L4"
+        assert ex_cfg.evaluation.vertex_accelerator_count == 1
+
+
+def test_model_evaluator_emits_5_line_warning_when_running_locally(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import logging
+    from distillfw.config import EvaluationConfig
+    from distillfw.stages.evaluator import ModelEvaluator
+
+    storage = StorageBackend(local_root=tmp_path)
+    prompts_file = tmp_path / "prompts.jsonl"
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
+
+    cfg = DistillationConfig(
+        task_id="local-eval-warning-test",
+        local=LocalConfig(storage_root=str(tmp_path)),
+        evaluation=EvaluationConfig(metrics=["exact_match", "latency"]),
+    )
+    ws = TaskWorkspace.initialize(cfg, prompts_file, storage=storage)
+    ws.mark_stage_completed(StageName.DATASET_GENERATOR)
+    ws.mark_stage_completed(StageName.DATASET_FORMATTER)
+    ws.mark_stage_completed(StageName.MODEL_TRAINER)
+    import pandas as pd
+
+    df = pd.DataFrame([{"prompt": "Hello", "completion": "World<end_of_turn>"}])
+    parquet_path = tmp_path / "split.parquet"
+    df.to_parquet(parquet_path, index=False)
+    storage.upload_file(parquet_path, f"{ws.formatted_dataset_dir_uri}/train.parquet")
+    storage.upload_file(parquet_path, f"{ws.formatted_dataset_dir_uri}/test.parquet")
+
+    evaluator = ModelEvaluator(
+        ws,
+        student_predict_fn=lambda prompts: (["World" for _ in prompts], [5.0 for _ in prompts]),
+        base_student_predict_fn=lambda prompts: (["Hi" for _ in prompts], [4.0 for _ in prompts]),
+    )
+    with caplog.at_level(logging.WARNING, logger="distillfw.stages.evaluator"):
+        result = evaluator.run()
+
+    assert "scorecard" in result
+    assert "after_training" in result["scorecard"]
+    captured_out = capsys.readouterr().out
+    warning_lines = [line for line in captured_out.splitlines() if line.startswith("WARNING [")]
+    assert len(warning_lines) == 5
+    log_warning_lines = [rec.message for rec in caplog.records if rec.message.startswith("WARNING [")]
+    assert len(log_warning_lines) == 5
+
+
+def test_model_evaluator_submits_vertex_custom_job_when_hardware_configured(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from distillfw.config import EvaluationConfig
+    from distillfw.gcp.vertex import VertexJobManager
+    from distillfw.stages.evaluator import ModelEvaluator
+
+    storage = StorageBackend(local_root=tmp_path)
+    prompts_file = tmp_path / "prompts.jsonl"
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Hello"}}) + "\n", encoding="utf-8")
+
+    cfg = DistillationConfig(
+        task_id="vertex-eval-job-test",
+        gcp=GCPConfig(project_id="p", bucket_name="b"),
+        evaluation=EvaluationConfig(
+            metrics=["exact_match"],
+            vertex_machine_type="g2-standard-12",
+            vertex_accelerator_type="NVIDIA_L4",
+            vertex_accelerator_count=1,
+        ),
+    )
+    ws = TaskWorkspace.initialize(cfg, prompts_file, storage=storage)
+    ws.mark_stage_completed(StageName.DATASET_GENERATOR)
+    ws.mark_stage_completed(StageName.DATASET_FORMATTER)
+    ws.mark_stage_completed(StageName.MODEL_TRAINER)
+
+    submitted_eval_jobs: list[dict] = []
+
+    def fake_submit_evaluation_job(self, display_name: str, task_uri: str, evaluation_config, env_vars=None) -> dict:
+        job_name = "projects/123/locations/us-central1/customJobs/eval_job_999"
+        info = {
+            "job_resource_name": job_name,
+            "display_name": display_name,
+            "state": "3",
+            "normalized_state": "JOB_STATE_RUNNING",
+        }
+        submitted_eval_jobs.append(info)
+        # Simulate the remote worker writing scorecard.json to GCS
+        storage.write_json(
+            f"{ws.evaluation_dir_uri}/scorecard.json",
+            {
+                "task_id": cfg.task_id,
+                "num_samples": 1,
+                "distilled_student": {"exact_match": 1.0},
+            },
+        )
+        return info
+
+    def fake_wait_for_job_completion(self, job_resource_name: str, poll_interval_seconds: float = 15.0, on_poll_callback=None) -> dict:
+        return {
+            "job_resource_name": job_resource_name,
+            "display_name": "distillfw-eval-vertex-eval-job-test",
+            "state": "4",
+            "normalized_state": "JOB_STATE_SUCCEEDED",
+            "error": None,
+        }
+
+    monkeypatch.setattr(VertexJobManager, "submit_evaluation_job", fake_submit_evaluation_job)
+    monkeypatch.setattr(VertexJobManager, "wait_for_job_completion", fake_wait_for_job_completion)
+
+    evaluator = ModelEvaluator(ws)
+    result = evaluator.run()
+    assert len(submitted_eval_jobs) == 1
+    assert result["scorecard"]["distilled_student"]["exact_match"] == 1.0
+    assert result["vertex_job_resource_name"] == "projects/123/locations/us-central1/customJobs/eval_job_999"
+    assert ws.load_state().stages[StageName.MODEL_EVALUATOR].status == StageStatus.COMPLETED
+
+
+def test_parse_llm_judge_verdict_and_repair_artifacts(tmp_path: Path) -> None:
+    from distillfw.stages.evaluator import (
+        parse_llm_judge_verdict,
+        repair_evaluation_judge_artifacts,
+    )
+
+    # 1. Pure JSON without Markdown fences
+    res1 = parse_llm_judge_verdict('{"score": 4, "reason": "Clear and accurate response."}')
+    assert res1["score"] == 4.0
+    assert res1["reason"] == "Clear and accurate response."
+    assert res1["_parsed_ok"] is True
+
+    # 2. Markdown-fenced JSON
+    fenced = '```json\n{\n  "score": 4,\n  "reason": "The Student response is accurate, clear, and concise."\n}\n```'
+    res2 = parse_llm_judge_verdict(fenced)
+    assert res2["score"] == 4.0
+    assert res2["reason"] == "The Student response is accurate, clear, and concise."
+    assert res2["_parsed_ok"] is True
+
+    # 3. Markdown-fenced JSON in the middle of a larger reasoning text
+    fenced_middle = (
+        "Let us compare the teacher reference and student output step by step.\n"
+        "The student covers the primary physical principle accurately.\n"
+        "```json\n"
+        '{"score": 5, "reason": "Matches teacher quality completely."}\n'
+        "```\n"
+        "Therefore, the student receives full marks."
+    )
+    res3 = parse_llm_judge_verdict(fenced_middle)
+    assert res3["score"] == 5.0
+    assert res3["reason"] == "Matches teacher quality completely."
+    assert res3["_parsed_ok"] is True
+
+    # 4. Unfenced JSON object embedded in the middle of a larger reasoning text
+    unfenced_middle = (
+        "Reasoning: The student missed one edge case but answered the core prompt well.\n"
+        'Verdict: {"score": 4, "reason": "Good core explanation, minor detail omitted."}\n'
+        "End of evaluation."
+    )
+    res4 = parse_llm_judge_verdict(unfenced_middle)
+    assert res4["score"] == 4.0
+    assert res4["reason"] == "Good core explanation, minor detail omitted."
+    assert res4["_parsed_ok"] is True
+
+    # 5. Malformed JSON with unescaped quotes inside reason or plain-text verdict
+    malformed = '```json\n{"score": 2, "reason": "Student wrote "hello" instead of the proof."}\n```'
+    res5 = parse_llm_judge_verdict(malformed)
+    assert res5["score"] == 2.0
+    assert "Student wrote" in res5["reason"]
+    assert res5["_parsed_ok"] is True
+
+    # 6. Retroactive repair of predictions.jsonl and scorecard.json
+    storage = StorageBackend(local_root=tmp_path)
+    prompts_file = tmp_path / "prompts.jsonl"
+    prompts_file.write_text(json.dumps({"data": {"prompt": "Explain photosynthesis"}}) + "\n", encoding="utf-8")
+    cfg = DistillationConfig(
+        task_id="repair-judge-test",
+        gcp=GCPConfig(project_id="p", bucket_name="b"),
+    )
+    ws = TaskWorkspace.initialize(cfg, prompts_file, storage=storage)
+
+    pred_record = {
+        "split": "test",
+        "prompt": "Explain photosynthesis",
+        "teacher_reference": "Plants convert sunlight into chemical energy.",
+        "base_student_prediction": "Plants use sunlight.",
+        "distilled_student_prediction": "Plants convert sunlight, water, and CO2 into glucose and oxygen.",
+        "base_latency_ms": 25.0,
+        "distilled_latency_ms": 20.0,
+        "base_metrics": {
+            "exact_match": 0.0,
+            "rouge1": 0.5,
+            "rouge2": 0.25,
+            "bleu": 0.1,
+            "llm_judge_score": 3.0,
+            "llm_judge_reason": '```json\n{\n  "score": 2,\n  "reason": "Too brief compared to teacher."\n}\n```',
+            "latency_ms": 25.0,
+        },
+        "distilled_metrics": {
+            "exact_match": 0.0,
+            "rouge1": 0.8,
+            "rouge2": 0.6,
+            "bleu": 0.5,
+            "llm_judge_score": 3.0,
+            "llm_judge_reason": '```json\n{\n  "score": 4,\n  "reason": "The Student response is accurate, clear, and concise."\n}\n```',
+            "latency_ms": 20.0,
+        },
+    }
+    storage.write_text(f"{ws.evaluation_dir_uri}/predictions.jsonl", json.dumps(pred_record) + "\n")
+    storage.write_json(
+        f"{ws.evaluation_dir_uri}/scorecard.json",
+        {
+            "task_id": cfg.task_id,
+            "num_samples": 1,
+            "before_training": {
+                "test": {
+                    "system_metrics": {"latency_mean_ms": 25.0, "latency_p50_ms": 25.0, "latency_p95_ms": 25.0}
+                }
+            },
+            "after_training": {
+                "test": {
+                    "system_metrics": {"latency_mean_ms": 20.0, "latency_p50_ms": 20.0, "latency_p95_ms": 20.0}
+                }
+            },
+            "base_student": {
+                "llm_judge": {"mean_rubric_score": 3.0, "win_or_tie_rate_vs_teacher": 0.0}
+            },
+            "distilled_student": {
+                "llm_judge": {"mean_rubric_score": 3.0, "win_or_tie_rate_vs_teacher": 0.0}
+            },
+            "improvement": {
+                "llm_judge_score_delta": 0.0,
+                "llm_judge_win_rate_delta": 0.0,
+            },
+        },
+    )
+
+    repaired = repair_evaluation_judge_artifacts(ws)
+    assert repaired is True
+
+    repaired_pred = json.loads(storage.read_text(f"{ws.evaluation_dir_uri}/predictions.jsonl").strip())
+    assert repaired_pred["base_metrics"]["llm_judge_score"] == 2.0
+    assert repaired_pred["base_metrics"]["llm_judge_reason"] == "Too brief compared to teacher."
+    assert repaired_pred["base_metrics"]["output_tokens"] > 0
+    assert repaired_pred["base_metrics"]["ms_per_output_token"] > 0
+    assert repaired_pred["distilled_metrics"]["llm_judge_score"] == 4.0
+    assert repaired_pred["distilled_metrics"]["llm_judge_reason"] == "The Student response is accurate, clear, and concise."
+    assert repaired_pred["distilled_metrics"]["output_tokens"] > repaired_pred["base_metrics"]["output_tokens"]
+    assert repaired_pred["distilled_metrics"]["ms_per_output_token"] > 0
+
+    repaired_sc = storage.read_json(f"{ws.evaluation_dir_uri}/scorecard.json")
+    assert repaired_sc["base_student"]["llm_judge"]["mean_rubric_score"] == 2.0
+    assert repaired_sc["base_student"]["llm_judge"]["win_or_tie_rate_vs_teacher"] == 0.0
+    assert repaired_sc["distilled_student"]["llm_judge"]["mean_rubric_score"] == 4.0
+    assert repaired_sc["distilled_student"]["llm_judge"]["win_or_tie_rate_vs_teacher"] == 1.0
+    assert repaired_sc["improvement"]["llm_judge_score_delta"] == 2.0
+    assert repaired_sc["improvement"]["llm_judge_win_rate_delta"] == 1.0
+    assert repaired_sc["before_training"]["test"]["system_metrics"]["mean_output_tokens"] > 0
+    assert repaired_sc["before_training"]["test"]["system_metrics"]["time_per_output_token_ms"] > 0
+    assert repaired_sc["after_training"]["test"]["system_metrics"]["mean_output_tokens"] > 0
+    assert repaired_sc["after_training"]["test"]["system_metrics"]["time_per_output_token_ms"] > 0
+    assert "mean_output_tokens" in repaired_sc["improvement"]["test"]["system_metrics"]
+    assert "time_per_output_token_ms" in repaired_sc["improvement"]["test"]["system_metrics"]
+
+
+def test_prompt_construction_config_and_template_rendering_and_propagation(tmp_path: Path) -> None:
+    import pandas as pd
+    from distillfw.config import PromptConstructionConfig
+    from distillfw.stages.formatter import DatasetFormatter
+    from distillfw.stages.generator import DatasetGenerator
+    from distillfw.state import TaskInitializationError
+
+    pc = PromptConstructionConfig(
+        system_instructions="You are an enterprise support router. Return strict JSON.",
+        prompt_template="Ticket ID: {ticket_id}\nCustomer Tier: {customer_tier}\nTicket Body: {ticket_body}",
+    )
+    rendered = pc.render_prompt(
+        {
+            "data": {
+                "ticket_id": "TKT-9001",
+                "customer_tier": "Enterprise",
+                "ticket_body": "SSO authentication fails with 502 error.",
+            }
+        }
+    )
+    assert rendered == (
+        "Ticket ID: TKT-9001\n"
+        "Customer Tier: Enterprise\n"
+        "Ticket Body: SSO authentication fails with 502 error."
+    )
+
+    # Missing 'data' field or missing placeholder key must fail strictly without backwards-compatibility fallback
+    with pytest.raises(ValueError, match="must contain a 'data' JSON object"):
+        pc.render_prompt({"prompt": "Legacy prompt"})
+
+    with pytest.raises(ValueError, match="Missing required placeholder field"):
+        pc.render_prompt({"data": {"ticket_id": "TKT-9001"}})
+
+    storage = StorageBackend(local_root=tmp_path)
+    bad_prompts_file = tmp_path / "bad_prompts.jsonl"
+    bad_prompts_file.write_text(json.dumps({"data": {"ticket_id": "TKT-9001"}}) + "\n", encoding="utf-8")
+    cfg = DistillationConfig(
+        task_id="prompt-construction-test",
+        gcp=GCPConfig(project_id="p", bucket_name="b"),
+        prompt_construction=pc,
+    )
+    with pytest.raises(TaskInitializationError, match="Missing required placeholder field"):
+        TaskWorkspace.initialize(cfg, bad_prompts_file, storage=storage)
+
+    good_prompts_file = tmp_path / "good_prompts.jsonl"
+    good_prompts_file.write_text(
+        "\n".join(
+            json.dumps(
+                {
+                    "data": {
+                        "ticket_id": f"TKT-{1000 + i}",
+                        "customer_tier": "Enterprise",
+                        "ticket_body": f"Issue #{i}",
+                    },
+                    "metadata": {"idx": i},
+                }
+            )
+            for i in range(10)
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    ws = TaskWorkspace.initialize(cfg, good_prompts_file, storage=storage)
+
+    seen_teacher_prompts: list[str] = []
+    gen = DatasetGenerator(
+        ws,
+        teacher_callable=lambda p, _t_cfg: (
+            seen_teacher_prompts.append(p)
+            or {"completion": '{"queue": "sso_ops"}', "thought": None}
+        ),
+    )
+    gen.run()
+    assert len(seen_teacher_prompts) == 10
+    assert seen_teacher_prompts[0].startswith("Ticket ID: TKT-1000\nCustomer Tier: Enterprise")
+
+    fmt = DatasetFormatter(ws)
+    fmt.run()
+    train_df = pd.read_parquet(
+        storage.download_file(f"{ws.formatted_dataset_dir_uri}/train.parquet", tmp_path / "train.parquet")
+    )
+    first_student_prompt = train_df.iloc[0]["prompt"]
+    assert "You are an enterprise support router. Return strict JSON." in first_student_prompt
+    assert "Ticket ID: TKT-" in first_student_prompt
+    assert "Customer Tier: Enterprise" in first_student_prompt
+
 
 
 

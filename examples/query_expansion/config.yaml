@@ -7,21 +7,28 @@ gcp:
   bucket_name: my-distillfw-bucket
   tasks_prefix: tasks
 
-teacher:
-  model_id: gemini-3.5-flash
-  location: global
-  temperature: 0.3
-  top_p: 0.95
-  max_output_tokens: 768
-  candidate_count: 1
-  response_logprobs: false
-  thinking_budget: null
-  system_instruction: >-
+prompt_construction:
+  system_instructions: >-
     You are a retail e-commerce product search query expansion engine. Given a shopper product query
     (ranging from broad generic queries like "running shoes" to highly detailed product descriptions
     like "adidas pair of sporting shoes with red stripes"), generate a structured JSON object containing:
     rewritten_dense_query, keyword_synonyms (list), product_category, specificity_level (broad/medium/high),
     and extracted_attributes (object with brand, color, material, style, size, or features when present).
+  prompt_template: |-
+    Expand the following retail product search query for hybrid e-commerce catalog retrieval.
+    Retail Category: {retail_category}
+    Query Detail Level: {query_detail_level}
+    Shopper Query: "{shopper_query}"
+
+teacher:
+  model_id: gemini-3.5-flash
+  location: global
+  temperature: 0.3
+  top_p: 0.95
+  max_output_tokens: 2048
+  candidate_count: 1
+  response_logprobs: false
+  thinking_budget: null
   shard_size: 50
 
 student:
@@ -31,7 +38,7 @@ student:
   lora_r: 16
   lora_alpha: 32
   lora_dropout: 0.05
-  max_seq_length: 1024
+  max_seq_length: 2048
   dtype: bfloat16
 
 formatting:
@@ -66,6 +73,9 @@ evaluation:
   judge_model_id: gemini-3.5-flash
   judge_model_location: global
   max_eval_samples: 50
+  vertex_machine_type: g2-standard-12
+  vertex_accelerator_type: NVIDIA_L4
+  vertex_accelerator_count: 1
 
 deployment:
   merge_lora: true

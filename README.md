@@ -217,7 +217,21 @@ distillfw reset-eval gs://my-distillfw-bucket/tasks/support-ticket-triage-v1
 distillfw list gs://my-distillfw-bucket/tasks
 ```
 
+### 4.5 Launch the Interactive Web UI (`distillfw ui`)
+
+```bash
+# Start the local Web UI pointing to your GCS tasks root
+distillfw ui --root-uri gs://my-distillfw-bucket/tasks --host 127.0.0.1 --port 8080
+```
+
+In your browser (`http://127.0.0.1:8080`), you can:
+- Enter any GCS tasks root path (`gs://<bucket>/tasks`) and select a task from the dropdown.
+- View overall task status, per-stage progress cursors, and direct **GCP Resource references & Google Cloud Console links** (GCS workspace, trainer checkpoints, exported student model weights, Vertex AI Custom Training Job + Cloud Logs, Vertex AI Model Registry resource, and Vertex AI Serving Endpoint).
+- Click **`config.yaml`**, any **log file** (`logs/*.log`), or any **dataset** (`00_inputs/`, `01_raw_dataset/`, `02_formatted_dataset/`, `04_evaluation/`) to inspect them in an emerging panel (with structured table rendering for datasets).
+- Inspect structured **Evaluation Metrics** (`Before Training` vs. `After Training` vs. `Improvement`) and open the **Side-by-Side Inferences** emerging panel to compare `Student Model Before Training`, `Student Model After Training`, and `Teacher Model` outputs side by side.
+
 ---
+
 
 ## 5. Usage via Python API
 

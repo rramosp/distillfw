@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>distillfw — Distillation Task Inspector &amp; Workspace UI</title>
+  <meta name="description" content="Inspect Gemini-to-Gemma distillation tasks on Google Cloud Storage: task status, GCP resources, config.yaml, logs, structured datasets, evaluation metrics, and side-by-side model inferences." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="/styles.css" />
+</head>
+<body>
+  <header class="topbar" role="banner">
+    <div class="topbar-inner">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">DF</span>
+        <div>
+          <h1 class="brand-title">distillfw</h1>
+          <p class="brand-subtitle">Gemini &rarr; Gemma Distillation Inspector</p>
+        </div>
+      </div>
+
+      <div class="controls-bar" role="search" aria-label="GCS Task Workspace Selector">
+        <div class="control-group control-group-root">
+          <label for="gcs-root-input" class="control-label">GCS Tasks Root Path</label>
+          <div class="input-with-button">
+            <input
+              id="gcs-root-input"
+              type="text"
+              class="text-input mono"
+              placeholder="gs://distillfw-storage/tasks"
+              autocomplete="off"
+              spellcheck="false"
+            />
+            <button id="load-tasks-btn" type="button" class="btn btn-primary">
+              Load Tasks
+            </button>
+          </div>
+        </div>
+
+        <div class="control-group control-group-select">
+          <label for="task-select" class="control-label">
+            Available Distillation Tasks <span id="tasks-count-badge" class="count-pill">0</span>
+          </label>
+          <div class="input-with-button">
+            <select id="task-select" class="select-input" disabled>
+              <option value="">Select a distillation task...</option>
+            </select>
+            <button id="refresh-task-btn" type="button" class="btn btn-secondary" disabled title="Refresh task state and Vertex AI job status">
+              Refresh
+            </button>
+          </div>
+        </div>
+
+        <div class="topbar-actions">
+          <button id="about-distillation-btn" type="button" class="btn btn-accent" title="Learn about Off-Policy vs. On-Policy distillation algorithms, vocabulary alignment, and teacher logprobs">
+            About Distillation
+          </button>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="main-container" role="main">
+    <div id="status-banner" class="status-banner hidden" role="alert"></div>
+
+    <!-- Empty state before a task is selected -->
+    <section id="empty-state" class="empty-state">
+      <div class="empty-state-card">
+        <h2>Select a GCS Distillation Task</h2>
+        <p>
+          Enter the GCS root URI where your distillation tasks are stored (for example,
+          <code class="mono">gs://distillfw-storage/tasks</code>) and click <strong>Load Tasks</strong>,
+          then choose a task from the dropdown above.
+        </p>
+      </div>
+    </section>
+
+    <!-- Selected Task Workspace Content -->
+    <div id="task-workspace" class="task-workspace hidden">
+      <!-- 1. Task Status Header & Config Trigger -->
+      <section class="card section-card" aria-labelledby="task-overview-heading">
+        <div class="section-header">
+          <div class="title-cluster">
+            <div class="title-row">
+              <h2 id="task-overview-heading" class="task-title mono">-</h2>
+              <span id="task-overall-status" class="status-badge">PENDING</span>
+            </div>
+            <p id="task-description" class="task-description"></p>
+          </div>
+          <div class="header-actions">
+            <button id="open-config-btn" type="button" class="btn btn-accent">
+              View Config (<span class="mono">config.yaml</span>)
+            </button>
+          </div>
+        </div>
+
+        <div id="task-metadata-strip" class="metadata-strip"></div>
+
+        <!-- Per-Stage Status Table -->
+        <div class="subsection">
+          <h3 class="subsection-title">Pipeline Stage Status</h3>
+          <div class="table-wrapper">
+            <table id="stages-table" class="data-table">
+              <thead>
+                <tr>
+                  <th>Stage</th>
+                  <th>Status</th>
+                  <th>Started (UTC)</th>
+                  <th>Completed (UTC)</th>
+                  <th>Progress Cursor &amp; Details</th>
+                </tr>
+              </thead>
+              <tbody id="stages-table-body"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- 2. GCP Resources & Console Links -->
+      <section class="card section-card" aria-labelledby="gcp-resources-heading">
+        <div class="section-header">
+          <div>
+            <h2 id="gcp-resources-heading" class="section-title">GCP Resources &amp; Console Links</h2>
+            <p class="section-subtitle">
+              Direct references and Google Cloud Console links for the GCS workspace, checkpoints, exported model weights, Vertex AI Custom Training Job, Deployed Model, and Serving Endpoint.
+            </p>
+          </div>
+        </div>
+        <div id="gcp-resources-grid" class="gcp-resources-grid"></div>
+      </section>
+
+      <!-- 3. Datasets & Log Files (2-column layout) -->
+      <div class="two-col-grid">
+        <!-- Datasets List -->
+        <section class="card section-card" aria-labelledby="datasets-heading">
+          <div class="section-header">
+            <div>
+              <h2 id="datasets-heading" class="section-title">
+                Task Datasets <span id="datasets-count" class="count-pill">0</span>
+              </h2>
+              <p class="section-subtitle">Click any dataset to inspect its structured table and fields in an emerging panel.</p>
+            </div>
+          </div>
+          <div id="datasets-list" class="artifact-list"></div>
+        </section>
+
+        <!-- Log Files List -->
+        <section class="card section-card" aria-labelledby="logs-heading">
+          <div class="section-header">
+            <div>
+              <h2 id="logs-heading" class="section-title">
+                Task Log Files <span id="logs-count" class="count-pill">0</span>
+              </h2>
+              <p class="section-subtitle">Click any log file synced from <code class="mono">logs/</code> to inspect full execution output.</p>
+            </div>
+          </div>
+          <div id="logs-list" class="artifact-list"></div>
+        </section>
+      </div>
+
+      <!-- 4. Evaluation Metrics & Side-by-Side Model Inferences -->
+      <section class="card section-card" aria-labelledby="evaluation-heading">
+        <div class="section-header">
+          <div>
+            <h2 id="evaluation-heading" class="section-title">Evaluation Metrics &amp; Model Comparison</h2>
+            <p class="section-subtitle">
+              Structured evaluation scorecard comparing the Student Model Before Training (Base Gemma) vs. Student Model After Training (Distilled Gemma) against the Gemini Teacher.
+            </p>
+          </div>
+          <div class="header-actions">
+            <button id="open-inferences-btn" type="button" class="btn btn-primary" disabled>
+              Compare Side-by-Side Inferences
+            </button>
+          </div>
+        </div>
+
+        <div id="evaluation-content"></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- Emerging Panel (<dialog> Slide-Over / Modal Drawer) -->
+  <dialog id="emerging-panel" class="emerging-dialog" closedby="any" aria-labelledby="panel-title">
+    <div class="emerging-panel-shell">
+      <header class="emerging-panel-header">
+        <div class="panel-title-group">
+          <span id="panel-kicker" class="panel-kicker">Artifact Inspector</span>
+          <h2 id="panel-title" class="panel-title">-</h2>
+          <code id="panel-uri" class="panel-uri mono"></code>
+        </div>
+        <div class="panel-header-actions">
+          <button id="panel-copy-uri-btn" type="button" class="btn btn-secondary btn-sm">
+            Copy URI
+          </button>
+          <button id="panel-close-btn" type="button" class="btn btn-secondary btn-sm" aria-label="Close emerging panel">
+            Close (Esc)
+          </button>
+        </div>
+      </header>
+
+      <div id="panel-toolbar" class="emerging-panel-toolbar hidden"></div>
+      <div id="panel-body" class="emerging-panel-body"></div>
+    </div>
+  </dialog>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>

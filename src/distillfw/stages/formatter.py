@@ -56,10 +56,14 @@ class DatasetFormatter:
         prompt_format: PromptFormat,
         representation: DatasetRepresentation,
         max_seq_length: int,
-        system_instruction: str | None,
+        prompt_construction_cfg: Any,
         tokenizer: Any | None,
     ) -> dict[str, Any]:
-        prompt = raw["prompt"]
+        if isinstance(raw.get("data"), dict):
+            prompt = prompt_construction_cfg.render_prompt(raw)
+        else:
+            prompt = raw["prompt"]
+        system_instruction = prompt_construction_cfg.system_instructions
         completion = raw["completion"]
         thought = raw.get("thought")
         candidates = raw.get("candidates") or [completion]
@@ -151,7 +155,7 @@ class DatasetFormatter:
                     prompt_format=config.formatting.prompt_format,
                     representation=config.formatting.dataset_representation,
                     max_seq_length=config.student.max_seq_length,
-                    system_instruction=config.teacher.system_instruction,
+                    prompt_construction_cfg=config.prompt_construction,
                     tokenizer=tokenizer,
                 )
                 for r in raw_records

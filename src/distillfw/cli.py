@@ -127,6 +127,26 @@ def _print_evaluation_summary_tables(scorecard: dict) -> None:
                         f"{a_val:{fmt}}",
                         f"{sign}{d_val:{fmt}}",
                     )
+
+        if "system_metrics" in before_m and "system_metrics" in after_m:
+            for key, label in (
+                ("mean_output_tokens", "Output Length (Tokens)"),
+                ("time_per_output_token_ms", "Time per Output Token (ms/tok)"),
+                ("latency_mean_ms", "Mean Latency (ms)"),
+                ("latency_p50_ms", "p50 Latency (ms)"),
+                ("latency_p95_ms", "p95 Latency (ms)"),
+            ):
+                b_val = before_m["system_metrics"].get(key)
+                a_val = after_m["system_metrics"].get(key)
+                d_val = delta_m.get("system_metrics", {}).get(key)
+                if b_val is not None and a_val is not None:
+                    sign = "+" if (d_val or 0.0) >= 0 else ""
+                    table.add_row(
+                        label,
+                        f"{b_val:.2f}",
+                        f"{a_val:.2f}",
+                        f"{sign}{d_val:.2f}",
+                    )
         console.print(table)
 
 
@@ -266,5 +286,37 @@ def reset_eval_cmd(task_uri: str, config_path: str | None = None) -> None:
     )
 
 
+@main.command("ui")
+@click.option(
+    "--root-uri",
+    default="gs://distillfw-storage/tasks",
+    show_default=True,
+    help="Default GCS root path (or local tasks directory) where distillation tasks are stored.",
+)
+@click.option(
+    "--host",
+    default="127.0.0.1",
+    show_default=True,
+    help="Host address to bind the web UI server.",
+)
+@click.option(
+    "--port",
+    default=8080,
+    type=int,
+    show_default=True,
+    help="Port to bind the web UI server.",
+)
+def ui_cmd(root_uri: str, host: str, port: int) -> None:
+    """Launch the distillfw Web UI to inspect tasks, GCP resources, configs, logs, datasets, and evaluations."""
+    from distillfw.ui.server import run_ui_server
+
+    console.print(
+        f"[bold green]Starting distillfw Web UI[/bold green] at [bold underline]http://{host}:{port}[/bold underline] "
+        f"(default tasks root: [cyan]{root_uri}[/cyan])"
+    )
+    run_ui_server(host=host, port=port, default_root_uri=root_uri)
+
+
 if __name__ == "__main__":
     main()
+
